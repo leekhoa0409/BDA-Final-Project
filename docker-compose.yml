@@ -1,0 +1,328 @@
+services:
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-01T16-36-33Z
+    container_name: minio
+    hostname: minio
+    ports:
+      - "9000:9000"   
+      - "9001:9001"  
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lakehouse
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./minio/init-buckets.sh:/init-buckets.sh
+    entrypoint: /bin/sh
+    command: /init-buckets.sh
+    networks:
+      - lakehouse
+
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.3
+    container_name: zookeeper
+    hostname: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    networks:
+      - lakehouse
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - lakehouse
+
+  nifi:
+    image: apache/nifi:1.24.0
+    container_name: nifi
+    hostname: nifi
+    ports:
+      - "8443:8443"
+    environment:
+      SINGLE_USER_CREDENTIALS_USERNAME: admin
+      SINGLE_USER_CREDENTIALS_PASSWORD: admin123456789
+      NIFI_WEB_HTTPS_PORT: 8443
+    volumes:
+      - nifi_data:/opt/nifi/nifi-current/data
+      - nifi_conf:/opt/nifi/nifi-current/conf
+      - nifi_logs:/opt/nifi/nifi-current/logs
+    networks:
+      - lakehouse
+
+
+  spark-master:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8080:8080"   
+      - "7077:7077"   
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+    volumes:
+      - ./spark/jobs:/opt/spark/jobs
+    networks:
+      - lakehouse
+
+  spark-worker:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-worker
+    hostname: spark-worker
+    ports:
+      - "8081:8081"
+    depends_on:
+      - spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_WORKER_WEBUI_PORT: 8081
+    volumes:
+      - ./spark/jobs:/opt/spark/jobs
+    networks:
+      - lakehouse
+
+
+
+  postgres-airflow:
+    image: postgres:15-alpine
+    container_name: postgres-airflow
+    hostname: postgres-airflow
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_AIRFLOW_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_AIRFLOW_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_AIRFLOW_DB}
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lakehouse
+
+  postgres-superset:
+    image: postgres:15-alpine
+    container_name: postgres-superset
+    hostname: postgres-superset
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERSET_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERSET_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_SUPERSET_DB}
+    volumes:
+      - postgres_superset_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d superset"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lakehouse
+
+
+  trino:
+    image: trinodb/trino:435
+    container_name: trino
+    hostname: trino
+    ports:
+      - "8085:8080"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+    networks:
+      - lakehouse
+
+  airflow-init:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: airflow-init
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_AIRFLOW_USER}:${POSTGRES_AIRFLOW_PASSWORD}@postgres-airflow:5432/${POSTGRES_AIRFLOW_DB}
+      AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: airflow
+      _AIRFLOW_WWW_USER_PASSWORD: airflow
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username airflow \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@lakehouse.local \
+          --password airflow || true
+        echo "Airflow init completed!"
+    networks:
+      - lakehouse
+
+  airflow-webserver:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: airflow-webserver
+    hostname: airflow-webserver
+    ports:
+      - "8082:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_AIRFLOW_USER}:${POSTGRES_AIRFLOW_PASSWORD}@postgres-airflow:5432/${POSTGRES_AIRFLOW_DB}
+      AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+      AIRFLOW__WEBSERVER__WTF_CSRF_ENABLED: 'False'
+    command: airflow webserver
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./spark/jobs:/opt/spark/jobs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - lakehouse
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: airflow-scheduler
+    hostname: airflow-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_AIRFLOW_USER}:${POSTGRES_AIRFLOW_PASSWORD}@postgres-airflow:5432/${POSTGRES_AIRFLOW_DB}
+      AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+    command: airflow scheduler
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./spark/jobs:/opt/spark/jobs
+    networks:
+      - lakehouse
+
+
+  superset:
+    image: apache/superset:3.1.0
+    container_name: superset
+    hostname: superset
+    ports:
+      - "8088:8088"
+    depends_on:
+      postgres-superset:
+        condition: service_healthy
+      trino:
+        condition: service_started
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_CONFIG_PATH: /app/superset_config.py
+    volumes:
+      - ./superset/superset_config.py:/app/superset_config.py
+      - superset_data:/app/superset_home
+    command: >
+      bash -c "
+        pip install --no-cache-dir trino sqlalchemy-trino psycopg2-binary &&
+        superset db upgrade &&
+        superset fab create-admin \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --email admin@lakehouse.local \
+          --password admin || true &&
+        superset init &&
+        superset run -h 0.0.0.0 -p 8088 --with-threads
+      "
+    networks:
+      - lakehouse
+
+
+volumes:
+  minio_data:
+  zookeeper_data:
+  kafka_data:
+  nifi_data:
+  nifi_conf:
+  nifi_logs:
+
+  postgres_airflow_data:
+  postgres_superset_data:
+  superset_data:
+
+
+networks:
+  lakehouse:
+    driver: bridge
+    name: lakehouse-network
