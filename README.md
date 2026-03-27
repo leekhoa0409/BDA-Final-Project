@@ -195,19 +195,6 @@ docker compose ps
 | **Data Format** | Delta Lake provides ACID transactions, schema enforcement, and time travel |
 | **Network Isolation** | Single bridge network for inter-service communication |
 
-### Recommendations for Improvement
-
-| # | Issue | Severity | Recommendation |
-|:--|:------|:---------|:---------------|
-| 1 | Credentials hardcoded in `spark-defaults.conf`, `delta.properties`, DAG file, and `superset_config.py` | HIGH | Use environment variables or secret management (Docker Secrets, Vault) for all credentials |
-| 2 | Kafka & NiFi are deployed but unused by any pipeline code | MEDIUM | Either integrate them (NiFi → Kafka → Spark Streaming → Bronze) or remove to save ~2-3GB RAM |
-| 3 | Validation tasks (`check_bronze/silver/gold`) are placeholders (`echo` + `sleep`) | MEDIUM | Implement real validation: record counts, schema checks, data freshness verification |
-| 4 | File-based Hive Metastore in Trino | MEDIUM | Use Hive Metastore Service (HMS) with PostgreSQL for shared metadata across Spark and Trino |
-| 5 | No monitoring or alerting stack | MEDIUM | Add Prometheus + Grafana for Spark jobs, Airflow health, and MinIO storage metrics |
-| 6 | Superset security disabled (CSRF, Talisman, secure cookies all off) | HIGH (prod) | Enable security features for any non-development deployment |
-| 7 | BashOperator used for spark-submit instead of SparkSubmitOperator | LOW | Migrate to `SparkSubmitOperator` for better error handling and connection management |
-| 8 | Single Spark worker (2 cores, 2GB) | LOW (dev) | Add workers and resource management (YARN/K8s) for production workloads |
-
 ### Summary
 
 The architecture is well-designed and follows established Data Lakehouse patterns. It is suitable for **learning and demonstration purposes**. For production readiness, the key priorities are: secrets management, real data source integration, monitoring, and security hardening.
