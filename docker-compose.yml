@@ -71,6 +71,25 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     volumes:
       - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - lakehouse
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: /bin/bash
+    command: /scripts/create-topics.sh
+    volumes:
+      - ./kafka/create-topics.sh:/scripts/create-topics.sh
     networks:
       - lakehouse
 
@@ -84,6 +103,7 @@ services:
       SINGLE_USER_CREDENTIALS_USERNAME: admin
       SINGLE_USER_CREDENTIALS_PASSWORD: admin123456789
       NIFI_WEB_HTTPS_PORT: 8443
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY}
     volumes:
       - nifi_data:/opt/nifi/nifi-current/data
       - nifi_conf:/opt/nifi/nifi-current/conf
@@ -99,13 +119,20 @@ services:
     container_name: spark-master
     hostname: spark-master
     ports:
-      - "8080:8080"   
-      - "7077:7077"   
+      - "8080:8080"
+      - "7077:7077"
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     environment:
       SPARK_MASTER_HOST: spark-master
       SPARK_MASTER_PORT: 7077
       SPARK_MASTER_WEBUI_PORT: 8080
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT}
     volumes:
       - ./spark/jobs:/opt/spark/jobs
     networks:
@@ -126,6 +153,13 @@ services:
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 2g
       SPARK_WORKER_WEBUI_PORT: 8081
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT}
     volumes:
       - ./spark/jobs:/opt/spark/jobs
     networks:
@@ -183,6 +217,9 @@ services:
     depends_on:
       minio-init:
         condition: service_completed_successfully
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
     volumes:
       - ./trino/catalog:/etc/trino/catalog
     networks:
@@ -240,6 +277,14 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
       AIRFLOW__WEBSERVER__WTF_CSRF_ENABLED: 'False'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT}
     command: airflow webserver
     volumes:
       - ./airflow/dags:/opt/airflow/dags
@@ -267,6 +312,14 @@ services:
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
       AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+      AIRFLOW__SCHEDULER__SCHEDULER_ZOMBIE_TASK_THRESHOLD: '3600'
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT}
     command: airflow scheduler
     volumes:
       - ./airflow/dags:/opt/airflow/dags
@@ -289,6 +342,10 @@ services:
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
       SUPERSET_CONFIG_PATH: /app/superset_config.py
+      SUPERSET_ENV: development
+      POSTGRES_SUPERSET_USER: ${POSTGRES_SUPERSET_USER}
+      POSTGRES_SUPERSET_PASSWORD: ${POSTGRES_SUPERSET_PASSWORD}
+      POSTGRES_SUPERSET_DB: ${POSTGRES_SUPERSET_DB}
     volumes:
       - ./superset/superset_config.py:/app/superset_config.py
       - superset_data:/app/superset_home
@@ -309,6 +366,68 @@ services:
       - lakehouse
 
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    hostname: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - lakehouse
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mlflow:
+    image: python:3.11-slim
+    container_name: mlflow
+    hostname: mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+    volumes:
+      - mlflow_data:/mlflow
+    command: >
+      bash -c "
+        pip install --no-cache-dir mlflow==2.12.1 boto3 sqlalchemy flask &&
+        mlflow server --backend-store-uri sqlite:///mlflow/mlflow.db --default-artifact-root s3://warehouse/mlflow/ --host 0.0.0.0 --port 5000
+      "
+    networks:
+      - lakehouse
+
+  model-serving:
+    build:
+      context: ./model-serving
+      dockerfile: Dockerfile
+    container_name: model-serving
+    hostname: model-serving
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT}
+    volumes:
+      - ./model-serving:/app
+    networks:
+      - lakehouse
+    depends_on:
+      - mlflow
+      - redis
+
+
 volumes:
   minio_data:
   zookeeper_data:
@@ -320,6 +439,9 @@ volumes:
   postgres_airflow_data:
   postgres_superset_data:
   superset_data:
+
+  redis_data:
+  mlflow_data:
 
 
 networks:

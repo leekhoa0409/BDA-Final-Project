@@ -1,0 +1,9 @@
+pytest==7.4.4
+pytest-timeout==2.2.0
+chispa==0.10.1
+pyspark==3.5.3
+delta-spark==3.1.0
+minio==7.2.3
+kafka-python==2.0.2
+requests==2.31.0
+urllib3==2.1.0

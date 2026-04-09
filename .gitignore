@@ -1,0 +1,8 @@
+# Claude
+.claude/
+
+# Environment
+.env
+
+# IDE
+.vscode/

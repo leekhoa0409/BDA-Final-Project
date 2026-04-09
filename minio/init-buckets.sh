@@ -17,9 +17,11 @@ echo "Silver bucket created"
 mc mb --ignore-existing myminio/gold
 echo "Gold bucket created"
 
-mc anonymous set download myminio/bronze
-mc anonymous set download myminio/silver
-mc anonymous set download myminio/gold
+mc mb --ignore-existing myminio/landing
+echo "Landing bucket created (for CSV uploads)"
+
+mc mb --ignore-existing myminio/warehouse
+echo "Warehouse bucket created (for Trino metastore)"
 
 echo "All buckets created and configured successfully!"
 echo "Buckets available:"
