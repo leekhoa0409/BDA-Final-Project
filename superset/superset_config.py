@@ -2,11 +2,18 @@ import os
 
 SECRET_KEY = os.environ.get('SUPERSET_SECRET_KEY', 'lakehouse_superset_secret_2024')
 
+POSTGRES_USER = os.environ.get('POSTGRES_SUPERSET_USER', 'superset')
+POSTGRES_PASSWORD = os.environ.get('POSTGRES_SUPERSET_PASSWORD', 'superset123')
+POSTGRES_HOST = os.environ.get('POSTGRES_SUPERSET_HOST', 'postgres-superset')
+POSTGRES_PORT = os.environ.get('POSTGRES_SUPERSET_PORT', '5432')
+POSTGRES_DB = os.environ.get('POSTGRES_SUPERSET_DB', 'superset')
+
 SQLALCHEMY_DATABASE_URI = (
-    'postgresql+psycopg2://superset:superset123@postgres-superset:5432/superset'
+    f'postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}'
+    f'@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}'
 )
 
-SQLALCHEMY_EXAMPLES_URI = 'trino://trino@trino:8085/delta'
+SQLALCHEMY_EXAMPLES_URI = 'trino://trino@trino:8080/delta'
 
 FAB_ADD_SECURITY_API = True
 
@@ -21,10 +28,12 @@ CACHE_CONFIG = {
     'CACHE_DEFAULT_TIMEOUT': 300,
 }
 
-WTF_CSRF_ENABLED = False
-TALISMAN_ENABLED = False
+# Security settings — toggled by SUPERSET_ENV environment variable
+IS_DEV = os.environ.get('SUPERSET_ENV', 'development') == 'development'
+WTF_CSRF_ENABLED = not IS_DEV
+TALISMAN_ENABLED = not IS_DEV
 ENABLE_PROXY_FIX = True
-SESSION_COOKIE_SECURE = False
+SESSION_COOKIE_SECURE = not IS_DEV
 SESSION_COOKIE_SAMESITE = 'Lax'
 
 ROW_LIMIT = 5000
