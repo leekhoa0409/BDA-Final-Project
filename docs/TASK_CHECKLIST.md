@@ -4,7 +4,7 @@ Dưới đây là bảng phân công chi tiết công việc cho 4 thành viên.
 
 ---
 
-## 🏗️ Member 1: Infrastructure & Data Ingestion (DE)
+## Member 1: Infrastructure & Data Ingestion (DE)
 *Bảo trì nền tảng và luồng dữ liệu thô từ Nguồn -> Bronze.*
 
 - [ ] **1. Quản trị Infrastructure**
@@ -23,7 +23,7 @@ Dưới đây là bảng phân công chi tiết công việc cho 4 thành viên.
 
 ---
 
-## 💎 Member 2: Lakehouse & Data Quality (DE)
+## Member 2: Lakehouse & Data Quality (DE)
 *Xây dựng các tầng dữ liệu Medallion và kiểm soát chất lượng.*
 
 - [ ] **1. Spark Transformation (Silver Layer)**
@@ -41,7 +41,7 @@ Dưới đây là bảng phân công chi tiết công việc cho 4 thành viên.
 
 ---
 
-## 🤖 Member 3: Machine Learning & MLOps (MLE)
+## Member 3: Machine Learning & MLOps (MLE)
 *Dự báo thời tiết và triển khai Model.*
 
 - [ ] **1. Feature Engineering**
@@ -59,7 +59,7 @@ Dưới đây là bảng phân công chi tiết công việc cho 4 thành viên.
 
 ---
 
-## 📈 Member 4: Monitoring, BI & Documentation (Analyst)
+## Member 4: Monitoring, BI & Documentation (Analyst)
 *Giám sát, phân tích insight và viết báo cáo.*
 
 - [ ] **1. Monitoring System (Prometheus & Grafana)**
