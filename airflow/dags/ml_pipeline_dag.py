@@ -31,8 +31,10 @@ def check_feature_store_data(**context):
     result = __import__('subprocess').run(
         [sys.executable, '-c', '''
 import boto3
-s3 = boto3.client("s3", endpoint_url="http://minio:9000",
-    aws_access_key_id="admin", aws_secret_access_key="admin123456")
+import os
+s3 = boto3.client("s3", endpoint_url=os.environ.get("MINIO_ENDPOINT", "http://minio:9000"),
+    aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY"), 
+    aws_secret_access_key=os.environ.get("MINIO_SECRET_KEY"))
 try:
     resp = s3.list_objects_v2(Bucket="warehouse", Prefix="features/training_data/", MaxKeys=1)
     print("ok" if resp.get("Contents") else "empty")

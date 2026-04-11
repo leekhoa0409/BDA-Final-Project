@@ -187,8 +187,8 @@ def save_scaler(scaler, feature_cols):
     
     s3 = boto3.client('s3',
         endpoint_url=os.environ.get('MINIO_ENDPOINT', 'http://minio:9000'),
-        aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID', os.environ.get('MINIO_ACCESS_KEY', 'admin')),
-        aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY', os.environ.get('MINIO_SECRET_KEY', 'admin123456')),
+        aws_access_key_id=os.environ.get('MINIO_ACCESS_KEY'),
+        aws_secret_access_key=os.environ.get('MINIO_SECRET_KEY'),
         region_name='us-east-1'
     )
     
