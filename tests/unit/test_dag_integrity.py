@@ -1,6 +1,5 @@
 """Test that all Airflow DAGs parse without errors."""
 import os
-import sys
 import pytest
 
 

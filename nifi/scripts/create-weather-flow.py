@@ -14,10 +14,7 @@ Prerequisites:
 """
 
 import argparse
-import json
 import os
-import ssl
-import time
 from urllib.parse import quote
 import requests
 import urllib3
@@ -199,9 +196,9 @@ class NiFiFlowCreator:
         print("\nWeather flow created successfully!")
         print(f"Process Group: OpenWeather One Call to Kafka (id={pg_id})")
         print(f"Cities ({len(TARGET_CITIES)}): {city_names}")
-        print(f"API: Current Weather 2.5 (city query, units=metric, free tier)")
-        print(f"Schedule: every 5 minutes per city")
-        print(f"Kafka topic: weather-raw")
+        print("API: Current Weather 2.5 (city query, units=metric, free tier)")
+        print("Schedule: every 5 minutes per city")
+        print("Kafka topic: weather-raw")
         print("\nNote: You need to start the processors manually from the NiFi UI.")
         return pg_id
 

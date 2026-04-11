@@ -1,11 +1,9 @@
 import os
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-import json
+from typing import Optional, List, Dict
 
 import numpy as np
-import pandas as pd
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -14,7 +12,7 @@ import mlflow.sklearn
 import redis
 import boto3
 import joblib
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Histogram, generate_latest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -73,7 +71,6 @@ async def load_model():
             
             scaler_data = joblib.load(tmp_path)
             feature_cols = scaler_data['feature_cols']
-            scaler = scaler_data['scaler']
             logger.info(f"Loaded scaler with {len(feature_cols)} features")
         except Exception as e:
             import traceback
@@ -91,7 +88,7 @@ async def load_model():
                     model_version = latest[0].version
                 else:
                     model_version = "unknown"
-            except:
+            except Exception:
                 model_version = "unknown"
         else:
             model_version = "no_model"

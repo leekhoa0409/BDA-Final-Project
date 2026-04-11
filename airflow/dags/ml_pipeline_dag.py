@@ -3,11 +3,13 @@ ML Pipeline DAG: Feature Store -> Training -> Model Registry -> Deployment
 
 Schedule: Daily at 2 AM
 """
-from datetime import datetime, timedelta
+from datetime import timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
+
+from common import SPARK_SUBMIT_BASE
 
 default_args = {
     'owner': 'lakehouse',
@@ -17,7 +19,6 @@ default_args = {
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
 }
-from common import SPARK_SUBMIT_BASE
 
 SPARK_CONF = SPARK_SUBMIT_BASE
 

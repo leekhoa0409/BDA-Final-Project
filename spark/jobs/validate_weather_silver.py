@@ -42,7 +42,7 @@ def validate():
         missing = set(REQUIRED_COLUMNS) - actual
         if missing:
             raise ValueError(f"Weather Silver validation FAILED: missing columns {missing}")
-        logger.info(f"Columns OK: all required columns present")
+        logger.info("Columns OK: all required columns present")
 
         # Check temperature range (-80 to 60 Celsius)
         out_of_range = df.filter(

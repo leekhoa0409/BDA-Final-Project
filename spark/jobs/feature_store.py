@@ -1,11 +1,10 @@
 import logging
 import sys
-from datetime import datetime
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, avg, min as spark_min, max as spark_max, stddev,
-    lag, lead, when, to_date, month, dayofweek,
-    hour, dayofyear, weekofyear, year, count, row_number
+    col, avg, stddev,
+    lag, lead, month, dayofweek,
+    hour, weekofyear, count
 )
 from pyspark.sql.window import Window
 

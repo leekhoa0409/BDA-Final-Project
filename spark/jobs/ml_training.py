@@ -2,7 +2,6 @@ import logging
 import sys
 import os
 from pyspark.sql import SparkSession
-import pandas as pd
 import numpy as np
 
 import mlflow
@@ -15,8 +14,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 
 from config import (
-    FEATURE_STORE_PATH, ANALYSIS_CITY,
-    MLFLOW_TRACKING_URI, MLFLOW_EXPERIMENT_NAME
+    FEATURE_STORE_PATH, MLFLOW_TRACKING_URI, MLFLOW_EXPERIMENT_NAME
 )
 
 logging.basicConfig(
@@ -225,7 +223,7 @@ def main():
         logger.info("=" * 60)
         logger.info("ML Training completed!")
         logger.info(f"Best model: {best[0]} (R2: {best[1]['r2']:.4f})")
-        logger.info(f"MLflow UI: http://localhost:5000")
+        logger.info("MLflow UI: http://localhost:5000")
         logger.info("=" * 60)
         
     except Exception as e:

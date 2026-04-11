@@ -97,7 +97,6 @@ def main():
 
     registered = 0
     skipped = 0
-    failed = 0
 
     for table_name, s3_path in TABLES.items():
         success = register_table(table_name, s3_path)
