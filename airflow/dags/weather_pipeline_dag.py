@@ -32,10 +32,11 @@ def check_landing_zone(**kwargs):
     result = subprocess.run(
         ['python', '-c', '''
 import boto3
+import os
 s3 = boto3.client("s3",
-    endpoint_url="http://minio:9000",
-    aws_access_key_id="admin",
-    aws_secret_access_key="admin123456")
+    endpoint_url=os.environ.get("MINIO_ENDPOINT", "http://minio:9000"),
+    aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY"), 
+    aws_secret_access_key=os.environ.get("MINIO_SECRET_KEY"))
 try:
     resp = s3.list_objects_v2(Bucket="landing", Prefix="weather/", MaxKeys=10)
     files = [o["Key"] for o in resp.get("Contents", [])
