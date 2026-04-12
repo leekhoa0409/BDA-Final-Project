@@ -15,7 +15,8 @@ RUN pip install --no-cache-dir \
     pandas==2.0.3 \
     numpy==1.24.4 \
     boto3==1.34.0 \
-    joblib==1.3.2
+    joblib==1.3.2 \
+    redis==5.0.1
 
 # Download required JARs for Delta Lake + S3/MinIO support
 RUN curl -L -o /opt/spark/jars/delta-spark_2.12-3.1.0.jar \

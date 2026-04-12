@@ -70,6 +70,11 @@ with DAG(
         execution_timeout=timedelta(hours=1),
     )
 
+    sync_redis = BashOperator(
+        task_id='sync_features_to_redis',
+        bash_command=f'{SPARK_CONF} {PYTHON_CMD}sync_redis_features.py',
+    )
+
     train_model = BashOperator(
         task_id='train_ml_model',
         bash_command=f'{SPARK_CONF} {PYTHON_CMD}ml_training.py',
@@ -95,4 +100,4 @@ else:
         bash_command='curl -s http://model-serving:8000/health || echo "Model serving not ready"',
     )
 
-    check_features >> update_features >> train_model >> verify_model >> update_model_serving
+    check_features >> update_features >> sync_redis >> train_model >> verify_model >> update_model_serving
