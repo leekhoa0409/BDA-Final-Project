@@ -551,7 +551,7 @@ def main():
 
         # 6. OPTIMIZATION
         if fact_path:
-            logger.info("⚡ Optimizing Delta Tables...")
+            logger.info("Optimizing Delta Tables...")
             optimize_delta(spark, fact_path)
             vacuum_delta(spark, fact_path)
 
