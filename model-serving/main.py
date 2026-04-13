@@ -6,6 +6,8 @@ from typing import Optional, List, Dict
 import numpy as np
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import mlflow
 import mlflow.sklearn
@@ -29,6 +31,12 @@ STAGE = os.environ.get("MODEL_STAGE", "Production")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
 REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
+
+# Mount static files
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if not os.path.exists(static_dir):
+    os.makedirs(static_dir)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 REQUEST_COUNT = Counter('prediction_requests_total', 'Total predictions', ['model', 'status'])
 REQUEST_LATENCY = Histogram('prediction_latency_seconds', 'Prediction latency')
@@ -131,6 +139,11 @@ async def health():
         "model_loaded": model is not None,
         "model_version": model_version
     }
+
+
+@app.get("/")
+async def read_index():
+    return FileResponse(os.path.join(static_dir, "index.html"))
 
 
 @app.get("/metrics")

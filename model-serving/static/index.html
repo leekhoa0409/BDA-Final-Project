@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Analytics | Predictive Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="overlay"></div>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a3.5 3.5 0 0 0 0-7c-.3 0-.6 0-.9.1a5 5 0 0 0-9.8 1.4c0 .5.1 1 .3 1.5a4.5 4.5 0 0 0 1.4 8.5h9"></path></svg>
+                <span>WeatherAI <span>Predict</span></span>
+            </div>
+            <div class="system-status">
+                <span class="dot pulse"></span>
+                <span id="model-status">Model: Loading...</span>
+            </div>
+        </header>
+
+        <main>
+            <section class="prediction-form-card glass">
+                <h2>Predictive Parameters</h2>
+                <p class="subtitle">Enter current atmospheric data to forecast temperature for the next 24 hours.</p>
+                
+                <form id="prediction-form">
+                    <div class="form-grid">
+                        <div class="input-group">
+                            <label for="temperature">Current Temp (°C)</label>
+                            <div class="input-wrapper">
+                                <input type="number" id="temperature" name="temperature" step="0.1" value="25.0" required>
+                                <span class="unit">°C</span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="humidity">Humidity (%)</label>
+                            <div class="input-wrapper">
+                                <input type="number" id="humidity" name="humidity" step="0.1" value="65.0" min="0" max="100" required>
+                                <span class="unit">%</span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="pressure">Pressure (hPa)</label>
+                            <div class="input-wrapper">
+                                <input type="number" id="pressure" name="pressure" step="0.1" value="1013.2" required>
+                                <span class="unit">hPa</span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="wind_speed">Wind Speed (m/s)</label>
+                            <div class="input-wrapper">
+                                <input type="number" id="wind_speed" name="wind_speed" step="0.1" value="4.5" required>
+                                <span class="unit">m/s</span>
+                            </div>
+                        </div>
+                        <div class="input-group">
+                            <label for="hour">Hour of Day</label>
+                            <select id="hour" name="hour">
+                                <!-- JS will populate -->
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label for="month">Month</label>
+                            <select id="month" name="month">
+                                <option value="1">January</option>
+                                <option value="2">February</option>
+                                <option value="3">March</option>
+                                <option value="4">April</option>
+                                <option value="5">May</option>
+                                <option value="6">June</option>
+                                <option value="7">July</option>
+                                <option value="8">August</option>
+                                <option value="9">September</option>
+                                <option value="10">October</option>
+                                <option value="11">November</option>
+                                <option value="12">December</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label for="day_of_week">Day of Week</label>
+                            <select id="day_of_week" name="day_of_week">
+                                <option value="1">Monday</option>
+                                <option value="2">Tuesday</option>
+                                <option value="3">Wednesday</option>
+                                <option value="4">Thursday</option>
+                                <option value="5">Friday</option>
+                                <option value="6">Saturday</option>
+                                <option value="7">Sunday</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" id="submit-btn" class="glow-on-hover">Generate Forecast</button>
+                </form>
+            </section>
+
+            <section class="results-container">
+                <div class="result-card glass" id="forecast-result">
+                    <div class="card-header">
+                        <h3>24h Temperature Forecast</h3>
+                        <span id="model-tag" class="tag">Production v1.0</span>
+                    </div>
+                    <div class="prediction-value">
+                        <span id="pred-value">--</span><span class="unit">°C</span>
+                    </div>
+                    <div class="stat-grid">
+                        <div class="stat-item">
+                            <span class="label">Confidence Range</span>
+                            <span class="value" id="conf-interval">-- to -- °C</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="label">Forecast Timestamp</span>
+                            <span class="value" id="forecast-time">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card glass">
+                    <canvas id="predictionChart"></canvas>
+                </div>
+            </section>
+        </main>
+        
+        <footer>
+            <p>&copy; 2024 Lakehouse Weather Pipeline | MLOps Graduation Project</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
