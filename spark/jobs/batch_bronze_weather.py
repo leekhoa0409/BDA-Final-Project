@@ -14,7 +14,7 @@ format, joins with city metadata, and writes to Bronze Delta table.
 import logging
 import sys
 
-from pyspark.sql import SparkSession
+import pyspark.sql
 from pyspark.sql.functions import (
     col, lit, current_timestamp, to_timestamp
 )
@@ -41,7 +41,7 @@ ATTRIBUTE_FILES = {
 
 
 def create_spark_session():
-    return (SparkSession.builder
+    return (pyspark.sql.SparkSession.builder
             .appName("Batch Bronze Weather - Kaggle Ingestion")
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
