@@ -6,3 +6,21 @@
 
 # IDE
 .vscode/
+
+
+._pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+*.log
+*.bak
+*.swp
+*.swo
+*.tmp
+*.DS_Store
+*.egg-info/
+dist/
+build/

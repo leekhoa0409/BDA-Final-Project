@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s # khoảng tg lấy dữ liệu một lần
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'cadvisor' # Thu thập chỉ số CPU/RAM của toàn bộ container
+    static_configs:
+      - targets: ['cadvisor:8080']
