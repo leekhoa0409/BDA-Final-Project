@@ -208,7 +208,7 @@ OPENWEATHER_API_KEY=your_api_key_here
 ### Step 3: Start All Services
 
 ```bash
-docker compose up -d
+docker comcxpose up -d
 ```
 
 Wait 1-2 minutes for all services to initialize. Check status:

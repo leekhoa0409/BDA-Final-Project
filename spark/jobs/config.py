@@ -26,6 +26,12 @@ GOLD_WEATHER_MONTHLY_PATH = os.environ.get(
     "GOLD_WEATHER_MONTHLY_PATH", "s3a://gold/weather_monthly_stats")
 GOLD_WEATHER_CITY_PATH = os.environ.get(
     "GOLD_WEATHER_CITY_PATH", "s3a://gold/weather_city_summary")
+DIM_CITY_PATH = os.environ.get(
+    "DIM_CITY_PATH", "s3a://gold/dim_city")
+DIM_DATE_PATH = os.environ.get(
+    "DIM_DATE_PATH", "s3a://gold/dim_date")
+FACT_WEATHER_DAILY_PATH = os.environ.get(
+    "FACT_WEATHER_DAILY_PATH", "s3a://gold/fact_weather_daily")
 
 # Analysis target city
 ANALYSIS_CITY = os.environ.get("ANALYSIS_CITY", "New York")
