@@ -1,17 +1,21 @@
 import logging
 import sys
+import great_expectations as ge
+from pyspark.sql.functions import year, month, dayofmonth
+from delta.tables import DeltaTable
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, current_timestamp, from_unixtime, to_date, date_format,
+    col, current_timestamp, from_unixtime, stddev, to_date, date_format,
     avg, min as spark_min, max as spark_max, count, countDistinct,
     first, desc, lit, row_number, when, lower
 )
 from pyspark.sql.window import Window
 from delta.tables import DeltaTable
 
+
 from config import (
-    BRONZE_WEATHER_STREAMING_PATH, BRONZE_WEATHER_BATCH_PATH,
+    BRONZE_WEATHER_STREAMING_PATH, BRONZE_WEATHER_BATCH_PATH, DIM_CITY_PATH, DIM_DATE_PATH, FACT_WEATHER_DAILY_PATH,
     SILVER_WEATHER_PATH, GOLD_WEATHER_DAILY_PATH,
     GOLD_WEATHER_MONTHLY_PATH, GOLD_WEATHER_CITY_PATH,
     ANALYSIS_CITY
@@ -24,14 +28,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("WeatherETL")
 
-
 def create_spark_session():
     return (SparkSession.builder
             .appName("Weather ETL - Silver & Gold")
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             .getOrCreate())
-
 
 def validate_dataframe(df, layer_name):
     """Check that a DataFrame is not None and has rows."""
@@ -45,7 +47,6 @@ def validate_dataframe(df, layer_name):
     logger.info(f"{layer_name}: {row_count} records available")
     return True
 
-
 def _path_exists(spark, path):
     """Return True if the given S3A / HDFS path exists."""
     try:
@@ -57,7 +58,6 @@ def _path_exists(spark, path):
         return fs.exists(jvm.org.apache.hadoop.fs.Path(path))
     except Exception:
         return False
-
 
 def read_streaming_bronze(spark):
     """Read from streaming Bronze (OpenWeather API ingestion) and flatten nested JSON."""
@@ -196,7 +196,9 @@ def silver_transformation(spark):
                 .withColumn("_dedup_rn", row_number().over(w_dedup))
                 .filter(col("_dedup_rn") == 1)
                 .drop("_dedup_rn"))
-
+    
+    validate_with_ge(df_clean)
+    
     # MERGE into Silver on key (city, recorded_dt) for incremental loading
     if _path_exists(spark, SILVER_WEATHER_PATH):
         logger.info("Silver table exists, performing MERGE (upsert)")
@@ -258,7 +260,12 @@ def gold_daily_stats(spark):
                   count("*").alias("measurement_count"),
               ))
 
-    df_gold = (df_agg
+    window_7d = Window.partitionBy("city").orderBy("recorded_date").rowsBetween(-6, 0)
+
+    df_enhanced = df_agg.withColumn("rolling_avg_temp", avg("avg_temperature").over(window_7d)) \
+                        .withColumn("temp_volatility", stddev("avg_temperature").over(window_7d))
+
+    df_gold = (df_enhanced
                .join(
                    dominant_conditions,
                    (df_agg.city == dominant_conditions.dc_city) &
@@ -268,7 +275,10 @@ def gold_daily_stats(spark):
                .drop("dc_city", "dc_date")
                .withColumn("aggregated_at", current_timestamp()))
 
-    df_gold.write.format("delta").mode("overwrite").save(GOLD_WEATHER_DAILY_PATH)
+    df_gold.write.format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .save(GOLD_WEATHER_DAILY_PATH)
 
     gold_count = df_gold.count()
     logger.info(f"Gold daily stats complete: {gold_count} records at {GOLD_WEATHER_DAILY_PATH}")
@@ -376,32 +386,196 @@ def gold_city_summary(spark):
     df_city.show(10, truncate=False)
     return GOLD_WEATHER_CITY_PATH
 
+def build_dim_city(spark):
+    df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
+
+    dim_city = (df
+        .select("city", "country", "latitude", "longitude")
+        .dropDuplicates(["city"])
+        .withColumn("city_id", row_number().over(Window.orderBy("city")))
+    )
+
+    dim_city.write.format("delta").mode("overwrite").save(DIM_CITY_PATH)
+    return DIM_CITY_PATH
+
+def build_dim_date(spark):
+    df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
+
+    dim_date = (df
+        .select("recorded_date")
+        .dropDuplicates()
+        .withColumn("date_id", row_number().over(Window.orderBy("recorded_date")))
+        .withColumn("year", year("recorded_date"))
+        .withColumn("month", month("recorded_date"))
+        .withColumn("day", dayofmonth("recorded_date"))
+    )
+
+    dim_date.write.format("delta").mode("overwrite").save(DIM_DATE_PATH)
+    return DIM_DATE_PATH
+
+def build_fact_weather(spark):
+    df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
+
+    dim_city = spark.read.format("delta").load(DIM_CITY_PATH)
+    dim_date = spark.read.format("delta").load(DIM_DATE_PATH)
+
+    # Aggregate
+    df_agg = (df.groupBy("city", "country", "recorded_date")
+        .agg(
+            avg("temperature").alias("avg_temperature"),
+            spark_min("temperature").alias("min_temperature"),
+            spark_max("temperature").alias("max_temperature"),
+            avg("humidity").alias("avg_humidity"),
+            count("*").alias("measurement_count")
+        )
+    )
+
+    # Rolling window
+    window_7d = Window.partitionBy("city").orderBy("recorded_date").rowsBetween(-6, 0)
+
+    df_agg = (df_agg
+        .withColumn("rolling_avg_temp", avg("avg_temperature").over(window_7d))
+        .withColumn("temp_volatility", stddev("avg_temperature").over(window_7d))
+        .withColumn("year", year("recorded_date")) 
+        .withColumn("month", month("recorded_date"))
+    )
+
+    # Join dimension
+    fact = (df_agg.alias("a")
+        .join(dim_city.alias("c"), ["city"], "left")
+        .join(dim_date.alias("d"), ["recorded_date"], "left")
+        .select(
+            col("c.city_id"),
+            col("d.date_id"),
+            col("a.year"),  
+            col("a.month"), 
+            "avg_temperature",
+            "min_temperature",
+            "max_temperature",
+            "avg_humidity",
+            "measurement_count",
+            "rolling_avg_temp",
+            "temp_volatility"
+        )
+    )
+
+    fact.write \
+    .format("delta") \
+    .partitionBy("year", "month") \
+    .mode("overwrite") \
+    .save(FACT_WEATHER_DAILY_PATH)
+
+    return FACT_WEATHER_DAILY_PATH
+
+def optimize_delta(spark, path):
+    delta_table = DeltaTable.forPath(spark, path)
+
+    spark.sql(f"""
+        OPTIMIZE delta.`{path}`
+        ZORDER BY (city_id, date_id)
+    """)
+
+def vacuum_delta(spark, path):
+    spark.sql(f"VACUUM delta.`{path}` RETAIN 168 HOURS")
+
+def validate_with_ge(df, expectation_suite_name="weather_quality"):
+    
+    errors = []
+
+    if df.filter(col("city").isNull()).count() > 0:
+        errors.append("city has null")
+
+    if df.filter(col("temperature").isNull()).count() > 0:
+        errors.append("temperature has null")
+
+    if df.filter(~col("temperature").between(-80, 60)).count() > 0:
+        errors.append("temperature out of range")
+
+    if df.filter(~col("humidity").between(0, 100)).count() > 0:
+        errors.append("humidity out of range")
+
+    if errors:
+        logger.error("Data Quality Failed:")
+        for e in errors:
+            logger.error(e)
+        raise Exception("Data Quality check failed")
+
+    logger.info("Data Quality Passed ")
+    return True
+
+
 
 def main():
     spark = create_spark_session()
 
     try:
+        logger.info(" START WEATHER ETL PIPELINE")
+    
+        # 1. SILVER LAYER
+        logger.info("Running Silver Transformation...")
         silver_path = silver_transformation(spark)
-        if silver_path:
-            gold_daily_stats(spark)
-            gold_monthly_stats(spark)
-            gold_city_summary(spark)
+
+        if not silver_path:
+            logger.warning("No Silver data. Stop pipeline.")
+            return
+        
+        # Load lại để đảm bảo đọc từ Delta
+        df_silver = spark.read.format("delta").load(silver_path)
+        logger.info(f" Silver loaded: {df_silver.count()} records")
+
+        # 2. DATA QUALITY
+        logger.info(" Running Data Quality Check...")
+        validate_with_ge(df_silver)
+        
+        # 3. DIMENSIONS
+        logger.info(" Building Dimension Tables...")
+
+        dim_city_path = build_dim_city(spark)
+        logger.info(f" Dim City built: {dim_city_path}")
+
+        dim_date_path = build_dim_date(spark)
+        logger.info(f" Dim Date built: {dim_date_path}")
+
+        # 4. FACT TABLE
+        logger.info(" Building Fact Table...")
+
+        fact_path = build_fact_weather(spark)
+        logger.info(f"Fact built: {fact_path}")
+
+        # 5. GOLD AGGREGATIONS
+        logger.info("Building Gold Aggregations...")
+
+        daily_path = gold_daily_stats(spark)
+        monthly_path = gold_monthly_stats(spark)
+        city_path = gold_city_summary(spark)
+
+        # 6. OPTIMIZATION
+        if fact_path:
+            logger.info("⚡ Optimizing Delta Tables...")
+            optimize_delta(spark, fact_path)
+            vacuum_delta(spark, fact_path)
 
         logger.info("=" * 60)
-        logger.info("Weather ETL Pipeline completed successfully!")
-        logger.info(f"  Bronze Streaming: {BRONZE_WEATHER_STREAMING_PATH}")
-        logger.info(f"  Bronze Batch:     {BRONZE_WEATHER_BATCH_PATH}")
-        logger.info(f"  Silver:           {SILVER_WEATHER_PATH}")
-        logger.info(f"  Gold Daily:       {GOLD_WEATHER_DAILY_PATH}")
-        logger.info(f"  Gold Monthly:     {GOLD_WEATHER_MONTHLY_PATH}")
-        logger.info(f"  Gold City:        {GOLD_WEATHER_CITY_PATH}")
+        logger.info(" PIPELINE COMPLETED SUCCESSFULLY")
         logger.info("=" * 60)
+
+        logger.info(f"Bronze Streaming: {BRONZE_WEATHER_STREAMING_PATH}")
+        logger.info(f"Bronze Batch:     {BRONZE_WEATHER_BATCH_PATH}")
+        logger.info(f"Silver:           {SILVER_WEATHER_PATH}")
+        logger.info(f"Dim City:         {dim_city_path}")
+        logger.info(f"Dim Date:         {dim_date_path}")
+        logger.info(f"Fact:             {fact_path}")
+        logger.info(f"Gold Daily:       {daily_path}")
+        logger.info(f"Gold Monthly:     {monthly_path}")
+        logger.info(f"Gold City:        {city_path}")
+        logger.info("=" * 60)
+
     except Exception as e:
-        logger.error(f"Weather ETL Pipeline failed: {e}", exc_info=True)
+        logger.error(" PIPELINE FAILED!", exc_info=True)
         raise
+
     finally:
         spark.stop()
-
 
 if __name__ == "__main__":
     main()

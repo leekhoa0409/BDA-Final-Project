@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir \
     pandas==2.0.3 \
     numpy==1.24.4 \
     boto3==1.34.0 \
+    great_expectations \
     joblib==1.3.2
 
 # Download required JARs for Delta Lake + S3/MinIO support
