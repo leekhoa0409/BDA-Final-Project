@@ -3,57 +3,110 @@
 
 # Environment
 .env
+.env.*
+!.env.example
 
 # IDE
 .vscode/
+.idea/
+*.iml
 
-
-._pycache__/
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg
+*.egg-info/
+*.whl
+venv/
+.venv/
+
+# Build & dist
+dist/
+build/
+
+# Testing & coverage
+.coverage
+.coverage.*
+coverage.xml
+*.coverage
+htmlcov/
+nosetests.xml
+.pytest_cache/
+.hypothesis/
+.tox/
+.nox/
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.pyright/
+
+# Databases & caches
 *.db
 *.sqlite
 *.log
 *.bak
+*.cache
+.cache
+
+# Temp & system
 *.swp
 *.swo
 *.tmp
-*.DS_Store
-*.egg-info/
-dist/
-build/
-*.egg
-*.log
-*.cache
-*.coverage
-.coverage.*
-htmlcov/
-.tox/
-.nox/
-.coverage
-.cache
-nosetests.xml
-coverage.xml
-*.coverage
-*.py,coverage
-.hypothesis/
-.pytest_cache/
-.pyre/
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pytype/
-.pyre/
-.pyright/
-.pyre/
-.pytype/
-.pyre/
-.pyright/
-.pyre/
-.pytype/
-.pyre/
-.pyright/
-.pyre/  
+.DS_Store
+Thumbs.db
 
+# Docker
+*.pid
+docker-compose.override.yml
+
+# Airflow
+airflow/logs/
+airflow/plugins/
+airflow/airflow.db
+airflow/airflow-webserver.pid
+airflow/standalone_admin_password.txt
+
+# Spark
+spark/logs/
+spark/work/
+spark/metastore_db/
+derby.log
+
+# MinIO data
+minio/data/
+
+# Kafka
+kafka/data/
+kafka/logs/
+
+# Trino
+trino/data/
+
+# Prometheus
+prometheus/data/
+
+# Superset
+superset/superset_home/
+superset/superset.db
+
+# NiFi
+nifi/data/
+nifi/logs/
+nifi/conf/
+
+# Model serving
+model-serving/models/
+model-serving/mlruns/
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Jupyter
+.ipynb_checkpoints/
