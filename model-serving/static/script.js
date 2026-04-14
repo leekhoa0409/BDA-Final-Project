@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const submitBtn = document.getElementById('submit-btn');
     const modelStatus = document.getElementById('model-status');
     const modelTag = document.getElementById('model-tag');
-    
+
     // Populate hour select
     for (let i = 0; i < 24; i++) {
         const option = document.createElement('option');
@@ -25,8 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(res => res.json())
         .then(data => {
             if (data.status === 'healthy') {
-                modelStatus.textContent = `Model: ${data.model_version}`;
-                modelTag.textContent = `Production ${data.model_version}`;
+                const display = data.model_loaded ? `${data.model_algorithm} (v${data.model_version})` : data.model_algorithm;
+                modelStatus.textContent = `Model: ${display}`;
+                modelTag.textContent = display;
             } else {
                 modelStatus.textContent = 'Model: Offline';
                 modelStatus.parentElement.querySelector('.dot').style.background = '#ef4444';
@@ -76,10 +77,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         submitBtn.disabled = true;
         submitBtn.textContent = 'Analyzing Patterns...';
-        
+
         const formData = new FormData(form);
         const requestData = {
             temperature: parseFloat(formData.get('temperature')),
@@ -101,13 +102,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!response.ok) throw new Error('Prediction Failed');
 
             const result = await response.json();
-            
+
             // Update UI with results
             document.getElementById('pred-value').textContent = result.predicted_temperature_24h.toFixed(1);
-            document.getElementById('conf-interval').textContent = 
+            document.getElementById('conf-interval').textContent =
                 `${result.confidence_lower.toFixed(1)} to ${result.confidence_upper.toFixed(1)} °C`;
             document.getElementById('forecast-time').textContent = new Date(result.timestamp).toLocaleString();
-            
+
             // Update Chart
             chart.data.datasets[0].data = [requestData.temperature, result.predicted_temperature_24h];
             chart.update();

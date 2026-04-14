@@ -133,6 +133,9 @@ def create_training_data(spark, city=ANALYSIS_CITY, forecast_horizon=24):
         lead("temperature", 12).over(w_lead)
     ).filter(col("target_temp").isNotNull())
     
+    w_24h = Window.partitionBy("city").orderBy("recorded_at").rowsBetween(-24, 0)
+    w_168h = Window.partitionBy("city").orderBy("recorded_at").rowsBetween(-168, 0)
+    
     training_features = target_df.select(
         col("city"),
         col("recorded_at"),
@@ -150,6 +153,10 @@ def create_training_data(spark, city=ANALYSIS_CITY, forecast_horizon=24):
         lag("temperature", 6).over(w_lag).alias("temp_lag_6h"),
         lag("temperature", 24).over(w_lag).alias("temp_lag_24h"),
         lag("humidity", 1).over(w_lag).alias("humid_lag_1h"),
+        avg("temperature").over(w_24h).alias("temp_24h_ma"),
+        avg("temperature").over(w_168h).alias("temp_168h_ma"),
+        avg("humidity").over(w_24h).alias("humid_24h_ma"),
+        stddev("temperature").over(w_24h).alias("temp_24h_std"),
         col("target_temp").alias("label_24h"),
         col("target_temp_6h").alias("label_6h"),
         col("target_temp_12h").alias("label_12h"),
@@ -163,10 +170,10 @@ def save_to_feature_store(spark, features, feature_name):
     
     if _path_exists(spark, path):
         logger.info(f"Appending to existing feature store: {feature_name}")
-        features.write.format("delta").mode("append").save(path)
+        features.write.format("delta").option("mergeSchema", "true").mode("append").save(path)
     else:
         logger.info(f"Creating new feature store: {feature_name}")
-        features.write.format("delta").mode("overwrite").save(path)
+        features.write.format("delta").option("overwriteSchema", "true").mode("overwrite").save(path)
     
     count = features.count()
     logger.info(f"Saved {count} records to {path}")
@@ -177,10 +184,7 @@ def main():
     spark = create_spark_session()
     
     try:
-        logger.info("=" * 60)
         logger.info("FEATURE STORE: Creating ML features from Gold/Silver")
-        logger.info("=" * 60)
-        
         hourly_features = create_hourly_features(spark, ANALYSIS_CITY)
         save_to_feature_store(spark, hourly_features, "hourly_weather")
         
@@ -190,12 +194,10 @@ def main():
         training_data = create_training_data(spark, ANALYSIS_CITY, 24)
         save_to_feature_store(spark, training_data, "training_data")
         
-        logger.info("=" * 60)
         logger.info("Feature Store update completed!")
         logger.info(f"  Hourly features: {FEATURE_STORE_PATH}/hourly_weather")
         logger.info(f"  Daily features: {FEATURE_STORE_PATH}/daily_weather")
         logger.info(f"  Training data: {FEATURE_STORE_PATH}/training_data")
-        logger.info("=" * 60)
         
     except Exception as e:
         logger.error(f"Feature store update failed: {e}", exc_info=True)
