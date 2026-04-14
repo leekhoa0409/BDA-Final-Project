@@ -9,7 +9,7 @@ from pyspark.sql.functions import (
 from pyspark.sql.window import Window
 
 from config import (
-    SILVER_WEATHER_PATH, GOLD_WEATHER_DAILY_PATH,
+    SILVER_WEATHER_PATH, FACT_WEATHER_DAILY_STATS_PATH,
     FEATURE_STORE_PATH, ANALYSIS_CITY
 )
 
@@ -83,7 +83,7 @@ def create_hourly_features(spark, city=ANALYSIS_CITY):
 def create_daily_features(spark, city=ANALYSIS_CITY):
     logger.info(f"Creating daily features for {city}")
     
-    df = spark.read.format("delta").load(GOLD_WEATHER_DAILY_PATH)
+    df = spark.read.format("delta").load(FACT_WEATHER_DAILY_STATS_PATH)
     df = df.filter(col("city") == city)
     
     w_lag = Window.partitionBy("city").orderBy("recorded_date")

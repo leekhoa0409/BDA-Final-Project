@@ -19,19 +19,19 @@ LANDING_WEATHER_PROCESSED_PATH = os.environ.get(
 SILVER_WEATHER_PATH = os.environ.get(
     "SILVER_WEATHER_PATH", "s3a://silver/weather_clean")
 
-# Gold layer
-GOLD_WEATHER_DAILY_PATH = os.environ.get(
-    "GOLD_WEATHER_DAILY_PATH", "s3a://gold/weather_daily_stats")
-GOLD_WEATHER_MONTHLY_PATH = os.environ.get(
-    "GOLD_WEATHER_MONTHLY_PATH", "s3a://gold/weather_monthly_stats")
-GOLD_WEATHER_CITY_PATH = os.environ.get(
-    "GOLD_WEATHER_CITY_PATH", "s3a://gold/weather_city_summary")
+# Gold layer — Dimension tables
 DIM_CITY_PATH = os.environ.get(
     "DIM_CITY_PATH", "s3a://gold/dim_city")
 DIM_DATE_PATH = os.environ.get(
     "DIM_DATE_PATH", "s3a://gold/dim_date")
-FACT_WEATHER_DAILY_PATH = os.environ.get(
-    "FACT_WEATHER_DAILY_PATH", "s3a://gold/fact_weather_daily")
+
+# Gold layer — Fact tables
+FACT_WEATHER_DAILY_STATS_PATH = os.environ.get(
+    "FACT_WEATHER_DAILY_STATS_PATH", "s3a://gold/fact_weather_daily_stats")
+FACT_WEATHER_MONTHLY_STATS_PATH = os.environ.get(
+    "FACT_WEATHER_MONTHLY_STATS_PATH", "s3a://gold/fact_weather_monthly_stats")
+FACT_WEATHER_CITY_SUMMARY_PATH = os.environ.get(
+    "FACT_WEATHER_CITY_SUMMARY_PATH", "s3a://gold/fact_weather_city_summary")
 
 # Analysis target city
 ANALYSIS_CITY = os.environ.get("ANALYSIS_CITY", "New York")

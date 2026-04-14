@@ -11,9 +11,9 @@ import requests
 from config import (
     TRINO_HOST, TRINO_PORT,
     BRONZE_WEATHER_STREAMING_PATH, BRONZE_WEATHER_BATCH_PATH,
-    SILVER_WEATHER_PATH, GOLD_WEATHER_DAILY_PATH,
-    GOLD_WEATHER_MONTHLY_PATH, GOLD_WEATHER_CITY_PATH,
-    DIM_CITY_PATH, DIM_DATE_PATH, FACT_WEATHER_DAILY_PATH,
+    SILVER_WEATHER_PATH, FACT_WEATHER_DAILY_STATS_PATH,
+    FACT_WEATHER_MONTHLY_STATS_PATH, FACT_WEATHER_CITY_SUMMARY_PATH,
+    DIM_CITY_PATH, DIM_DATE_PATH,
 )
 
 logging.basicConfig(
@@ -30,12 +30,11 @@ TABLES = {
     "bronze_weather_streaming": BRONZE_WEATHER_STREAMING_PATH.replace("s3a://", "s3://"),
     "bronze_weather_batch": BRONZE_WEATHER_BATCH_PATH.replace("s3a://", "s3://"),
     "silver_weather_clean": SILVER_WEATHER_PATH.replace("s3a://", "s3://"),
-    "gold_weather_daily_stats": GOLD_WEATHER_DAILY_PATH.replace("s3a://", "s3://"),
-    "gold_weather_monthly_stats": GOLD_WEATHER_MONTHLY_PATH.replace("s3a://", "s3://"),
-    "gold_weather_city_summary": GOLD_WEATHER_CITY_PATH.replace("s3a://", "s3://"),
     "dim_city": DIM_CITY_PATH.replace("s3a://", "s3://"),
     "dim_date": DIM_DATE_PATH.replace("s3a://", "s3://"),
-    "fact_weather_daily": FACT_WEATHER_DAILY_PATH.replace("s3a://", "s3://"),
+    "fact_weather_daily_stats": FACT_WEATHER_DAILY_STATS_PATH.replace("s3a://", "s3://"),
+    "fact_weather_monthly_stats": FACT_WEATHER_MONTHLY_STATS_PATH.replace("s3a://", "s3://"),
+    "fact_weather_city_summary": FACT_WEATHER_CITY_SUMMARY_PATH.replace("s3a://", "s3://"),
 }
 
 SCHEMA_NAME = "default"

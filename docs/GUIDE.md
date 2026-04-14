@@ -230,12 +230,10 @@ docker exec spark-master spark-submit \
 - `dim_date`: Thong tin ngay (date_id, recorded_date, year, month, day)
 
 **Fact Table:**
-- `fact_weather_daily`: Bang fact lien ket dim_city va dim_date, co rolling avg 7 ngay va temp volatility. Partition theo year/month
-
-**Gold (Tong hop) — 3 bang:**
-- `gold_weather_daily_stats`: Thong ke theo ngay (avg/min/max nhiet do, do am, gio, rolling avg 7 ngay, dieu kien thoi tiet chu dao)
-- `gold_weather_monthly_stats`: Thong ke theo thang (xu huong nhiet do, so ngay mua/nang)
-- `gold_weather_city_summary`: Tong quan New York (nhiet do moi nhat, trung binh tong the, so ngay theo doi, dieu kien thoi tiet chu dao)
+**Fact Tables (Star Schema) — 3 bang:**
+- `fact_weather_daily_stats`: Thong ke theo ngay (avg/min/max nhiet do, do am, gio, rolling avg 7 ngay, dieu kien thoi tiet chu dao, city_id, date_id). Partition theo year/month, OPTIMIZE + ZORDER
+- `fact_weather_monthly_stats`: Thong ke theo thang (xu huong nhiet do, so ngay mua/nang)
+- `fact_weather_city_summary`: Tong quan New York (nhiet do moi nhat, trung binh tong the, so ngay theo doi, dieu kien thoi tiet chu dao)
 
 **Optimization:**
 - OPTIMIZE + ZORDER (city_id, date_id) tren fact table
@@ -253,10 +251,9 @@ for name, path in [
     ("Silver", "s3a://silver/weather_clean"),
     ("Dim City", "s3a://gold/dim_city"),
     ("Dim Date", "s3a://gold/dim_date"),
-    ("Fact Weather Daily", "s3a://gold/fact_weather_daily"),
-    ("Gold Daily", "s3a://gold/weather_daily_stats"),
-    ("Gold Monthly", "s3a://gold/weather_monthly_stats"),
-    ("Gold City Summary", "s3a://gold/weather_city_summary"),
+    ("Fact Daily Stats", "s3a://gold/fact_weather_daily_stats"),
+    ("Fact Monthly Stats", "s3a://gold/fact_weather_monthly_stats"),
+    ("Fact City Summary", "s3a://gold/fact_weather_city_summary"),
 ]:
     try:
         count = spark.read.format("delta").load(path).count()
@@ -275,10 +272,9 @@ Bronze Streaming: NOT FOUND (chua chay streaming)
 Silver: ~43,000+ records (chi New York, da dedup)
 Dim City: 1 record (New York)
 Dim Date: ~1,854 records (so ngay co data)
-Fact Weather Daily: ~1,854 records (partition theo year/month)
-Gold Daily: ~1,854 records (5 nam theo ngay)
-Gold Monthly: ~61 records (5 nam theo thang)
-Gold City Summary: 1 record (tong quan New York)
+Fact Daily Stats: ~1,854 records (5 nam theo ngay, partition year/month)
+Fact Monthly Stats: ~61 records (5 nam theo thang)
+Fact City Summary: 1 record (tong quan New York)
 ```
 
 **Thoi gian**: ~3-5 phut
@@ -292,7 +288,7 @@ docker exec spark-master python3 /opt/spark/jobs/register_trino_tables.py
 
 **Lam gi**: Goi Trino REST API de dang ky 9 Delta tables, cho phep truy van SQL.
 
-**Ket qua mong doi**: `8 registered/existing, 1 skipped` (streaming Bronze chua co data nen skip)
+**Ket qua mong doi**: `7 registered/existing, 1 skipped` (streaming Bronze chua co data nen skip)
 
 **Cac tables duoc dang ky:**
 
@@ -303,10 +299,9 @@ docker exec spark-master python3 /opt/spark/jobs/register_trino_tables.py
 | `delta.default.silver_weather_clean` | Du lieu da lam sach |
 | `delta.default.dim_city` | Dimension: thanh pho |
 | `delta.default.dim_date` | Dimension: ngay |
-| `delta.default.fact_weather_daily` | Fact: thong ke ngay (Star Schema) |
-| `delta.default.gold_weather_daily_stats` | Gold: thong ke ngay |
-| `delta.default.gold_weather_monthly_stats` | Gold: thong ke thang |
-| `delta.default.gold_weather_city_summary` | Gold: tong quan thanh pho |
+| `delta.default.fact_weather_daily_stats` | Fact: thong ke ngay (Star Schema, partition year/month) |
+| `delta.default.fact_weather_monthly_stats` | Fact: thong ke thang |
+| `delta.default.fact_weather_city_summary` | Fact: tong quan thanh pho |
 
 ---
 
@@ -318,23 +313,23 @@ docker exec spark-master python3 /opt/spark/jobs/register_trino_tables.py
 docker exec trino trino --execute "SHOW TABLES FROM delta.default"
 ```
 
-### 6.2 Truy van Gold Daily Stats
+### 6.2 Truy van Fact Daily Stats
 
 ```bash
 docker exec trino trino --execute \
   "SELECT recorded_date, avg_temperature, min_temperature, max_temperature,
           dominant_weather_condition
-   FROM delta.default.gold_weather_daily_stats
+   FROM delta.default.fact_weather_daily_stats
    ORDER BY recorded_date DESC LIMIT 10"
 ```
 
-### 6.3 Truy van Gold Monthly Stats
+### 6.3 Truy van Fact Monthly Stats
 
 ```bash
 docker exec trino trino --execute \
   "SELECT year_month, avg_temperature, rainy_day_count, clear_day_count,
           total_measurements
-   FROM delta.default.gold_weather_monthly_stats
+   FROM delta.default.fact_weather_monthly_stats
    ORDER BY year_month DESC LIMIT 12"
 ```
 
@@ -342,10 +337,10 @@ docker exec trino trino --execute \
 
 ```bash
 docker exec trino trino --execute \
-  "SELECT * FROM delta.default.gold_weather_city_summary"
+  "SELECT * FROM delta.default.fact_weather_city_summary"
 ```
 
-### 6.5 Truy van Star Schema (Dim/Fact)
+### 6.5 Truy van Star Schema (Dim/Fact join)
 
 ```bash
 # Kiem tra dim tables
@@ -355,7 +350,7 @@ docker exec trino trino --execute "SELECT * FROM delta.default.dim_date LIMIT 10
 # Query fact voi join dim
 docker exec trino trino --execute \
   "SELECT d.year, d.month, AVG(f.avg_temperature) as avg_temp
-   FROM delta.default.fact_weather_daily f
+   FROM delta.default.fact_weather_daily_stats f
    JOIN delta.default.dim_date d ON f.date_id = d.date_id
    GROUP BY d.year, d.month
    ORDER BY d.year DESC, d.month DESC
@@ -372,7 +367,7 @@ Trong Trino CLI, thu:
 ```sql
 SHOW TABLES FROM delta.default;
 SELECT COUNT(*) FROM delta.default.silver_weather_clean;
-SELECT AVG(avg_temperature) FROM delta.default.gold_weather_monthly_stats WHERE year_month LIKE '2017%';
+SELECT AVG(avg_temperature) FROM delta.default.fact_weather_monthly_stats WHERE year_month LIKE '2017%';
 ```
 
 Go `quit` de thoat.
@@ -406,7 +401,7 @@ bash superset/setup_trino_connection.sh
 
 ```sql
 SELECT recorded_date, avg_temperature, dominant_weather_condition
-FROM gold_weather_daily_stats
+FROM fact_weather_daily_stats
 WHERE recorded_date >= DATE '2017-01-01'
 ORDER BY recorded_date
 ```
@@ -420,7 +415,7 @@ ORDER BY recorded_date
 - **Line Chart**: `avg_temperature` theo `recorded_date` (xu huong nhiet do)
 - **Bar Chart**: `avg_temperature` theo `year_month` (nhiet do theo thang)
 - **Pie Chart**: `clear_day_count` vs `rainy_day_count` (ti le thoi tiet)
-- **Area Chart**: `rolling_avg_temp` theo `recorded_date` tu `gold_weather_daily_stats` (xu huong 7 ngay)
+- **Area Chart**: `rolling_avg_temp` theo `recorded_date` tu `fact_weather_daily_stats` (xu huong 7 ngay)
 
 ### 7.5 Tao Dashboard
 
