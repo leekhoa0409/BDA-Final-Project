@@ -4,7 +4,7 @@ import sys
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 
-from config import SILVER_WEATHER_PATH, GOLD_WEATHER_DAILY_PATH
+from config import SILVER_WEATHER_PATH, FACT_WEATHER_DAILY_STATS_PATH
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,7 +14,7 @@ logging.basicConfig(
 logger = logging.getLogger("ValidateWeatherGold")
 
 SILVER_PATH = SILVER_WEATHER_PATH
-GOLD_PATH = GOLD_WEATHER_DAILY_PATH
+GOLD_PATH = FACT_WEATHER_DAILY_STATS_PATH
 
 
 def validate():

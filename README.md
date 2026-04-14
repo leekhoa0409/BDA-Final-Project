@@ -262,21 +262,21 @@ docker exec spark-master python3 /opt/spark/jobs/register_trino_tables.py
 ### Step 6: Verify via Trino
 
 ```bash
-# Query Gold daily stats
+# Query Fact daily stats
 docker exec trino trino --execute \
   "SELECT recorded_date, avg_temperature, dominant_weather_condition
-   FROM delta.default.gold_weather_daily_stats
+   FROM delta.default.fact_weather_daily_stats
    ORDER BY recorded_date DESC LIMIT 10"
 
-# Query Gold monthly stats
+# Query Fact monthly stats
 docker exec trino trino --execute \
   "SELECT year_month, avg_temperature, rainy_day_count, clear_day_count
-   FROM delta.default.gold_weather_monthly_stats
+   FROM delta.default.fact_weather_monthly_stats
    ORDER BY year_month DESC LIMIT 12"
 
 # Query city summary
 docker exec trino trino --execute \
-  "SELECT * FROM delta.default.gold_weather_city_summary"
+  "SELECT * FROM delta.default.fact_weather_city_summary"
 ```
 
 ### Step 7: Setup Superset
@@ -297,12 +297,12 @@ Example queries:
 ```sql
 -- Daily temperature trend
 SELECT recorded_date, avg_temperature, min_temperature, max_temperature
-FROM gold_weather_daily_stats
+FROM fact_weather_daily_stats
 ORDER BY recorded_date;
 
 -- Monthly seasonal patterns
 SELECT year_month, avg_temperature, rainy_day_count, clear_day_count
-FROM gold_weather_monthly_stats
+FROM fact_weather_monthly_stats
 ORDER BY year_month;
 ```
 

@@ -52,6 +52,8 @@ Data is ingested automatically via NiFi -> Kafka -> Spark Streaming -> Bronze.
 ## Analysis Focus
 
 All Gold layer tables are filtered for **New York** only:
-- `gold_weather_daily_stats` — Daily temperature, humidity, pressure trends
-- `gold_weather_monthly_stats` — Monthly/seasonal patterns, rainy vs clear days
-- `gold_weather_city_summary` — Latest conditions + historical overview
+- `dim_city` — Dimension: city metadata (city_id, country, lat, lon)
+- `dim_date` — Dimension: date attributes (date_id, year, month, day)
+- `fact_weather_daily_stats` — Daily temperature, humidity, pressure trends (with dim keys, partitioned by year/month)
+- `fact_weather_monthly_stats` — Monthly/seasonal patterns, rainy vs clear days
+- `fact_weather_city_summary` — Latest conditions + historical overview

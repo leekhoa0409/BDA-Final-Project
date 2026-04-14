@@ -11,13 +11,12 @@ from pyspark.sql.functions import (
     first, desc, lit, row_number, when, lower
 )
 from pyspark.sql.window import Window
-from delta.tables import DeltaTable
-
 
 from config import (
-    BRONZE_WEATHER_STREAMING_PATH, BRONZE_WEATHER_BATCH_PATH, DIM_CITY_PATH, DIM_DATE_PATH, FACT_WEATHER_DAILY_PATH,
-    SILVER_WEATHER_PATH, GOLD_WEATHER_DAILY_PATH,
-    GOLD_WEATHER_MONTHLY_PATH, GOLD_WEATHER_CITY_PATH,
+    BRONZE_WEATHER_STREAMING_PATH, BRONZE_WEATHER_BATCH_PATH,
+    DIM_CITY_PATH, DIM_DATE_PATH,
+    SILVER_WEATHER_PATH, FACT_WEATHER_DAILY_STATS_PATH,
+    FACT_WEATHER_MONTHLY_STATS_PATH, FACT_WEATHER_CITY_SUMMARY_PATH,
     ANALYSIS_CITY
 )
 
@@ -221,14 +220,18 @@ def silver_transformation(spark):
 
 
 def gold_daily_stats(spark):
-    """Gold layer: daily weather statistics per city."""
+    """Gold layer: daily weather statistics per city, with dimension keys."""
     logger.info("=" * 60)
-    logger.info("GOLD LAYER: Daily weather stats")
+    logger.info("GOLD LAYER: fact_weather_daily_stats")
     logger.info("=" * 60)
 
     df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
     if not validate_dataframe(df, "Gold Daily"):
         return None
+
+    # Load dimension tables for surrogate keys
+    dim_city = spark.read.format("delta").load(DIM_CITY_PATH)
+    dim_date = spark.read.format("delta").load(DIM_DATE_PATH)
 
     # Dominant weather condition per city + date via row_number
     w_condition = Window.partitionBy("city", "recorded_date", "weather_condition")
@@ -265,6 +268,7 @@ def gold_daily_stats(spark):
     df_enhanced = df_agg.withColumn("rolling_avg_temp", avg("avg_temperature").over(window_7d)) \
                         .withColumn("temp_volatility", stddev("avg_temperature").over(window_7d))
 
+    # Join dominant weather condition
     df_gold = (df_enhanced
                .join(
                    dominant_conditions,
@@ -272,24 +276,32 @@ def gold_daily_stats(spark):
                    (df_agg.recorded_date == dominant_conditions.dc_date),
                    "left"
                )
-               .drop("dc_city", "dc_date")
+               .drop("dc_city", "dc_date"))
+
+    # Join dimension keys
+    df_gold = (df_gold
+               .join(dim_city.select("city_id", "city"), ["city"], "left")
+               .join(dim_date.select("date_id", "recorded_date"), ["recorded_date"], "left")
+               .withColumn("year", year("recorded_date"))
+               .withColumn("month", month("recorded_date"))
                .withColumn("aggregated_at", current_timestamp()))
 
     df_gold.write.format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
-    .save(GOLD_WEATHER_DAILY_PATH)
+        .mode("overwrite") \
+        .option("overwriteSchema", "true") \
+        .partitionBy("year", "month") \
+        .save(FACT_WEATHER_DAILY_STATS_PATH)
 
     gold_count = df_gold.count()
-    logger.info(f"Gold daily stats complete: {gold_count} records at {GOLD_WEATHER_DAILY_PATH}")
+    logger.info(f"fact_weather_daily_stats complete: {gold_count} records at {FACT_WEATHER_DAILY_STATS_PATH}")
     df_gold.show(10, truncate=False)
-    return GOLD_WEATHER_DAILY_PATH
+    return FACT_WEATHER_DAILY_STATS_PATH
 
 
 def gold_monthly_stats(spark):
     """Gold layer: monthly weather statistics per city."""
     logger.info("=" * 60)
-    logger.info("GOLD LAYER: Monthly weather stats")
+    logger.info("GOLD LAYER: fact_weather_monthly_stats")
     logger.info("=" * 60)
 
     df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
@@ -315,18 +327,18 @@ def gold_monthly_stats(spark):
                   )
                   .withColumn("aggregated_at", current_timestamp()))
 
-    df_monthly.write.format("delta").mode("overwrite").save(GOLD_WEATHER_MONTHLY_PATH)
+    df_monthly.write.format("delta").mode("overwrite").save(FACT_WEATHER_MONTHLY_STATS_PATH)
 
     monthly_count = df_monthly.count()
-    logger.info(f"Gold monthly stats complete: {monthly_count} records at {GOLD_WEATHER_MONTHLY_PATH}")
+    logger.info(f"fact_weather_monthly_stats complete: {monthly_count} records at {FACT_WEATHER_MONTHLY_STATS_PATH}")
     df_monthly.show(10, truncate=False)
-    return GOLD_WEATHER_MONTHLY_PATH
+    return FACT_WEATHER_MONTHLY_STATS_PATH
 
 
 def gold_city_summary(spark):
     """Gold layer: overall city-level weather summary."""
     logger.info("=" * 60)
-    logger.info("GOLD LAYER: City summary")
+    logger.info("GOLD LAYER: fact_weather_city_summary")
     logger.info("=" * 60)
 
     df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
@@ -379,12 +391,12 @@ def gold_city_summary(spark):
                .drop("dom_city")
                .withColumn("aggregated_at", current_timestamp()))
 
-    df_city.write.format("delta").mode("overwrite").save(GOLD_WEATHER_CITY_PATH)
+    df_city.write.format("delta").mode("overwrite").save(FACT_WEATHER_CITY_SUMMARY_PATH)
 
     city_count = df_city.count()
-    logger.info(f"Gold city summary complete: {city_count} records at {GOLD_WEATHER_CITY_PATH}")
+    logger.info(f"fact_weather_city_summary complete: {city_count} records at {FACT_WEATHER_CITY_SUMMARY_PATH}")
     df_city.show(10, truncate=False)
-    return GOLD_WEATHER_CITY_PATH
+    return FACT_WEATHER_CITY_SUMMARY_PATH
 
 def build_dim_city(spark):
     df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
@@ -413,69 +425,15 @@ def build_dim_date(spark):
     dim_date.write.format("delta").mode("overwrite").save(DIM_DATE_PATH)
     return DIM_DATE_PATH
 
-def build_fact_weather(spark):
-    df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
-
-    dim_city = spark.read.format("delta").load(DIM_CITY_PATH)
-    dim_date = spark.read.format("delta").load(DIM_DATE_PATH)
-
-    # Aggregate
-    df_agg = (df.groupBy("city", "country", "recorded_date")
-        .agg(
-            avg("temperature").alias("avg_temperature"),
-            spark_min("temperature").alias("min_temperature"),
-            spark_max("temperature").alias("max_temperature"),
-            avg("humidity").alias("avg_humidity"),
-            count("*").alias("measurement_count")
-        )
-    )
-
-    # Rolling window
-    window_7d = Window.partitionBy("city").orderBy("recorded_date").rowsBetween(-6, 0)
-
-    df_agg = (df_agg
-        .withColumn("rolling_avg_temp", avg("avg_temperature").over(window_7d))
-        .withColumn("temp_volatility", stddev("avg_temperature").over(window_7d))
-        .withColumn("year", year("recorded_date")) 
-        .withColumn("month", month("recorded_date"))
-    )
-
-    # Join dimension
-    fact = (df_agg.alias("a")
-        .join(dim_city.alias("c"), ["city"], "left")
-        .join(dim_date.alias("d"), ["recorded_date"], "left")
-        .select(
-            col("c.city_id"),
-            col("d.date_id"),
-            col("a.year"),  
-            col("a.month"), 
-            "avg_temperature",
-            "min_temperature",
-            "max_temperature",
-            "avg_humidity",
-            "measurement_count",
-            "rolling_avg_temp",
-            "temp_volatility"
-        )
-    )
-
-    fact.write \
-    .format("delta") \
-    .partitionBy("year", "month") \
-    .mode("overwrite") \
-    .save(FACT_WEATHER_DAILY_PATH)
-
-    return FACT_WEATHER_DAILY_PATH
-
 def optimize_delta(spark, path):
-    delta_table = DeltaTable.forPath(spark, path)
-
+    """Run OPTIMIZE + ZORDER on a Delta table."""
     spark.sql(f"""
         OPTIMIZE delta.`{path}`
         ZORDER BY (city_id, date_id)
     """)
 
 def vacuum_delta(spark, path):
+    """Remove old files from Delta table."""
     spark.sql(f"VACUUM delta.`{path}` RETAIN 168 HOURS")
 
 def validate_with_ge(df, expectation_suite_name="weather_quality"):
@@ -510,7 +468,7 @@ def main():
 
     try:
         logger.info(" START WEATHER ETL PIPELINE")
-    
+
         # 1. SILVER LAYER
         logger.info("Running Silver Transformation...")
         silver_path = silver_transformation(spark)
@@ -518,7 +476,7 @@ def main():
         if not silver_path:
             logger.warning("No Silver data. Stop pipeline.")
             return
-        
+
         # Load lại để đảm bảo đọc từ Delta
         df_silver = spark.read.format("delta").load(silver_path)
         logger.info(f" Silver loaded: {df_silver.count()} records")
@@ -526,8 +484,8 @@ def main():
         # 2. DATA QUALITY
         logger.info(" Running Data Quality Check...")
         validate_with_ge(df_silver)
-        
-        # 3. DIMENSIONS
+
+        # 3. DIMENSION TABLES
         logger.info(" Building Dimension Tables...")
 
         dim_city_path = build_dim_city(spark)
@@ -536,24 +494,18 @@ def main():
         dim_date_path = build_dim_date(spark)
         logger.info(f" Dim Date built: {dim_date_path}")
 
-        # 4. FACT TABLE
-        logger.info(" Building Fact Table...")
-
-        fact_path = build_fact_weather(spark)
-        logger.info(f"Fact built: {fact_path}")
-
-        # 5. GOLD AGGREGATIONS
-        logger.info("Building Gold Aggregations...")
+        # 4. FACT TABLES (Gold Aggregations with dim keys)
+        logger.info(" Building Fact Tables...")
 
         daily_path = gold_daily_stats(spark)
         monthly_path = gold_monthly_stats(spark)
         city_path = gold_city_summary(spark)
 
-        # 6. OPTIMIZATION
-        if fact_path:
-            logger.info("Optimizing Delta Tables...")
-            optimize_delta(spark, fact_path)
-            vacuum_delta(spark, fact_path)
+        # 5. OPTIMIZATION
+        if daily_path:
+            logger.info("Optimizing fact_weather_daily_stats...")
+            optimize_delta(spark, daily_path)
+            vacuum_delta(spark, daily_path)
 
         logger.info("=" * 60)
         logger.info(" PIPELINE COMPLETED SUCCESSFULLY")
@@ -564,10 +516,9 @@ def main():
         logger.info(f"Silver:           {SILVER_WEATHER_PATH}")
         logger.info(f"Dim City:         {dim_city_path}")
         logger.info(f"Dim Date:         {dim_date_path}")
-        logger.info(f"Fact:             {fact_path}")
-        logger.info(f"Gold Daily:       {daily_path}")
-        logger.info(f"Gold Monthly:     {monthly_path}")
-        logger.info(f"Gold City:        {city_path}")
+        logger.info(f"Fact Daily:       {daily_path}")
+        logger.info(f"Fact Monthly:     {monthly_path}")
+        logger.info(f"Fact City:        {city_path}")
         logger.info("=" * 60)
 
     except Exception as e:
