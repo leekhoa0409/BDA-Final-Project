@@ -115,7 +115,19 @@ Su dung `mode("append")` de khong ghi de du lieu cu neu chay lai. Du lieu duoc l
 
 **Nguyen tac Bronze**: Giu nguyen du lieu tho — khong loc, khong doi don vi, khong loai bo ban ghi. Nhiet do van la Kelvin, tat ca 36 thanh pho deu duoc giu lai.
 
-**Ket qua**: ~1,629,108 records tai `s3a://bronze/weather_batch/`
+### Buoc 2.6: Move CSV sang processed/
+
+Sau khi ghi Bronze thanh cong, ham `_move_csv_to_processed()` duoc goi de chuyen tat ca file CSV tu `landing/weather/` sang `landing/weather/processed/` qua boto3 (copy + delete).
+
+```python
+s3.copy_object(Bucket="landing", Key="weather/processed/temperature.csv",
+               CopySource={"Bucket": "landing", "Key": "weather/temperature.csv"})
+s3.delete_object(Bucket="landing", Key="weather/temperature.csv")
+```
+
+**Ly do**: Ham `check_landing_zone` cua Airflow (Stage 1) loc file `.csv` khong nam trong `/processed/`. Neu khong move, moi lan pipeline chay se ingest lai toan bo 1.6 trieu records, gay trung lap va lang phi tai nguyen.
+
+**Ket qua**: ~1,629,108 records tai `s3a://bronze/weather_batch/` + 7 CSV files moved to `processed/`
 
 ---
 
@@ -409,3 +421,12 @@ Trino (SQL query engine) -> Superset (Dashboard)
 | `execution_timeout` | `2 gio` (ingest, ETL) | Gioi han thoi gian chay toi da |
 | `trigger_rule` | `none_failed_min_one_success` | Chay neu khong co task nao fail va it nhat 1 task thanh cong |
 | `max_active_runs` | mac dinh (1) | Chi 1 DAG run tai mot thoi diem |
+
+## Cau hinh Spark Cluster
+
+| Tham so | Gia tri | Y nghia |
+|---------|---------|---------|
+| `SPARK_WORKER_CORES` | `4` | So CPU cores cho worker xu ly |
+| `SPARK_WORKER_MEMORY` | `4g` | RAM cho worker |
+
+Tai nguyen nay chia se giua tat ca Spark apps (streaming, ETL, validate). Moi spark-submit mac dinh dung 1 core + 1GB RAM. Voi 4 cores, co the chay dong thoi streaming (1 core) + pipeline tasks (1-2 cores) + du phong (1 core).

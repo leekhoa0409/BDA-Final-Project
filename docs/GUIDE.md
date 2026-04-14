@@ -41,7 +41,7 @@ Landing (CSV goc) -> Bronze (Delta, raw) -> Silver (Da lam sach) -> Gold (Tong h
 | Service | Lam gi | URL |
 |---------|--------|-----|
 | **MinIO** | Luu tru du lieu (giong Amazon S3) | http://localhost:9001 |
-| **Spark** (Master + Worker) | Xu ly du lieu (ETL) | http://localhost:8080 |
+| **Spark** (Master + Worker: 4 cores, 4GB) | Xu ly du lieu (ETL) | http://localhost:8080 |
 | **Airflow** (Webserver + Scheduler) | Dieu phoi tu dong (scheduler) | http://localhost:8082 |
 | **Kafka** + Zookeeper | Truyen du lieu thoi gian thuc | - |
 | **NiFi** | Lay du lieu tu OpenWeather API | https://localhost:8443 |
@@ -199,10 +199,11 @@ docker exec spark-master spark-submit \
 - Join voi `city_attributes.csv` de lay thong tin country, lat, lon
 - Them metadata: `source`, `ingested_at`
 - Ghi vao `s3a://bronze/weather_batch/` (Delta format)
+- **Tu dong move CSV sang `landing/weather/processed/`** sau khi ingest thanh cong — tranh ingest lai khi pipeline chay lan tiep theo
 
 > **Luu y**: Bronze giu nguyen raw data, chua doi don vi hay filter. Viec chuyen Kelvin -> Celsius nam o buoc Silver.
 
-**Ket qua mong doi**: `Written 1,629,108 records to Bronze`
+**Ket qua mong doi**: `Written 1,629,108 records to Bronze` + `Moved 7 CSV files to processed/`
 
 **Thoi gian**: ~2-3 phut
 
@@ -357,7 +358,72 @@ docker exec trino trino --execute \
    LIMIT 12"
 ```
 
-### 6.6 Truy van Trino tuong tac (CLI)
+### 6.6 Kiem tra du lieu moi do vao Bronze va Silver
+
+Dung cac truy van sau de xac nhan du lieu dang duoc nap va xu ly dung:
+
+```bash
+# --- BRONZE: Kiem tra du lieu batch (Kaggle CSV) ---
+docker exec trino trino --execute \
+  "SELECT COUNT(*) as total_records,
+          MIN(datetime) as earliest,
+          MAX(datetime) as latest,
+          COUNT(DISTINCT city) as num_cities
+   FROM delta.default.bronze_weather_batch"
+
+# --- BRONZE: Kiem tra du lieu streaming (API) ---
+# Luu y: Bang nay chi ton tai SAU KHI streaming da chay va register_trino_tables chay lai.
+# Neu gap loi "Table does not exist" -> streaming chua co du lieu, bo qua va xem Bronze batch.
+
+# Xem 10 records moi nhat do vao tu OpenWeather API
+docker exec trino trino --execute \
+  "SELECT name as city,
+          main.temp as temperature,
+          main.humidity as humidity,
+          wind.speed as wind_speed,
+          from_unixtime(dt) as recorded_at,
+          ingested_at
+   FROM delta.default.bronze_weather_streaming
+   ORDER BY ingested_at DESC LIMIT 10"
+
+# Dem so records streaming theo ngay (xac nhan du lieu do lien tuc)
+docker exec trino trino --execute \
+  "SELECT CAST(ingested_at AS DATE) as ngay,
+          COUNT(*) as so_records
+   FROM delta.default.bronze_weather_streaming
+   GROUP BY CAST(ingested_at AS DATE)
+   ORDER BY ngay DESC LIMIT 7"
+
+# --- SILVER: Kiem tra du lieu da lam sach ---
+# Xem 10 records moi nhat trong Silver
+docker exec trino trino --execute \
+  "SELECT city, temperature, humidity, wind_speed,
+          weather_condition, recorded_at, source
+   FROM delta.default.silver_weather_clean
+   ORDER BY recorded_at DESC LIMIT 10"
+
+# So sanh so luong giua Bronze va Silver
+docker exec trino trino --execute \
+  "SELECT 'bronze_batch' as layer, COUNT(*) as records
+   FROM delta.default.bronze_weather_batch
+   UNION ALL
+   SELECT 'bronze_streaming', COUNT(*)
+   FROM delta.default.bronze_weather_streaming
+   UNION ALL
+   SELECT 'silver', COUNT(*)
+   FROM delta.default.silver_weather_clean"
+
+# Kiem tra du lieu tu ca 2 nguon (batch + streaming) da merge vao Silver
+docker exec trino trino --execute \
+  "SELECT source,
+          COUNT(*) as records,
+          MIN(recorded_at) as earliest,
+          MAX(recorded_at) as latest
+   FROM delta.default.silver_weather_clean
+   GROUP BY source"
+```
+
+### 6.7 Truy van Trino tuong tac (CLI)
 
 ```bash
 docker exec -it trino trino
@@ -818,7 +884,82 @@ docker exec spark-master spark-submit --master spark://spark-master:7077 \
 
 **Ket qua mong doi**: Tat ca phai hien `validation PASSED`
 
-### 13.3 Spark Master/Worker khong start
+### 13.3 Spark tasks bi WAITING (khong chay)
+
+**Trieu chung**: Task tren Airflow hien `running` nhung Spark UI (http://localhost:8080) hien app dang `WAITING`.
+
+**Nguyen nhan**: Spark Worker het tai nguyen (cores/RAM). Kiem tra:
+
+```bash
+# Xem cac app dang chay va WAITING tren Spark cluster
+curl -s http://localhost:8080/json/ | python3 -c "
+import sys,json
+d = json.load(sys.stdin)
+print(f'Worker cores: {d.get(\"cores\",\"?\")} | Memory: {d.get(\"memory\",\"?\")}')
+for app in d.get('activeapps', []):
+    print(f'  {app[\"name\"]} | state: {app[\"state\"]}')"
+```
+
+**Cach fix**:
+
+1. Kill cac app khong can thiet (debug, app cu bi treo):
+```bash
+# Kill 1 app cu the
+curl -X POST "http://localhost:8080/app/kill/?id=<APP_ID>&terminate=true"
+```
+
+2. Neu streaming dang chiem het core, tam dung streaming de pipeline chay:
+```bash
+docker exec airflow-webserver airflow dags pause weather_streaming
+# Doi pipeline chay xong, roi unpause
+docker exec airflow-webserver airflow dags unpause weather_streaming
+```
+
+3. Tang tai nguyen Spark Worker trong `docker-compose.yml` (hien tai: 4 cores, 4GB):
+```yaml
+SPARK_WORKER_CORES: 4    # Tang neu may co nhieu CPU
+SPARK_WORKER_MEMORY: 4g  # Tang neu may co nhieu RAM
+```
+Sau do: `docker compose up -d spark-worker`
+
+### 13.4 Pipeline ingest lai du lieu cu (Bronze bi trung lap)
+
+**Trieu chung**: Moi lan pipeline chay, `ingest_csv_to_bronze` lai nap lai toan bo CSV (1.6 trieu records), Bronze tang dan.
+
+**Nguyen nhan**: CSV van nam trong `landing/weather/` (chua duoc move sang `processed/`).
+
+**Cach fix**: Job `batch_bronze_weather.py` da tu dong move CSV sang `landing/weather/processed/` sau khi ingest. Neu van bi trung:
+
+```bash
+# Kiem tra CSV con trong landing khong
+docker exec spark-master python3 -c "
+import boto3
+s3 = boto3.client('s3', endpoint_url='http://minio:9000',
+    aws_access_key_id='admin', aws_secret_access_key='admin123456',
+    region_name='us-east-1')
+resp = s3.list_objects_v2(Bucket='landing', Prefix='weather/', MaxKeys=20)
+for c in resp.get('Contents', []):
+    print(c['Key'])
+"
+
+# Neu van con CSV o landing/weather/ (khong phai processed/), move thu cong:
+docker exec spark-master python3 -c "
+import boto3
+s3 = boto3.client('s3', endpoint_url='http://minio:9000',
+    aws_access_key_id='admin', aws_secret_access_key='admin123456',
+    region_name='us-east-1')
+resp = s3.list_objects_v2(Bucket='landing', Prefix='weather/', MaxKeys=50)
+for obj in resp.get('Contents', []):
+    key = obj['Key']
+    if key.endswith('.csv') and '/processed/' not in key:
+        new_key = 'weather/processed/' + key.split('/')[-1]
+        s3.copy_object(Bucket='landing', Key=new_key, CopySource={'Bucket': 'landing', 'Key': key})
+        s3.delete_object(Bucket='landing', Key=key)
+        print(f'Moved {key} -> {new_key}')
+"
+```
+
+### 13.5 Spark Master/Worker khong start
 
 ```bash
 docker compose logs spark-master | tail -10
@@ -827,7 +968,7 @@ docker compose logs spark-master | tail -10
 - Neu `Permission denied`: Rebuild image: `docker compose up -d --build spark-master spark-worker`
 - Neu `OOM` (Out of Memory): Tang RAM hoac giam `SPARK_WORKER_MEMORY` trong docker-compose.yml
 
-### 13.4 Airflow DAG fail
+### 13.6 Airflow DAG fail
 
 **Buoc 1: Xac dinh DAG va task nao fail**
 
@@ -914,7 +1055,7 @@ docker exec airflow-scheduler airflow tasks clear weather_pipeline \
 docker exec airflow-webserver airflow dags trigger weather_pipeline
 ```
 
-### 13.5 NiFi khong gui du lieu vao Kafka
+### 13.7 NiFi khong gui du lieu vao Kafka
 
 **Buoc 1: Kiem tra processors co dang Running**
 
