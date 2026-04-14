@@ -12,8 +12,9 @@
 8. [Buoc 6: Setup Streaming Pipeline (NiFi + Kafka)](#8-buoc-6-setup-streaming-pipeline)
 9. [Buoc 7: Bat tu dong hoa (Airflow)](#9-buoc-7-bat-tu-dong-hoa)
 10. [Buoc 8: Setup Machine Learning Pipeline (Du bao nhiet do)](#10-buoc-8-setup-machine-learning-pipeline)
-11. [Quan ly va van hanh](#11-quan-ly-va-van-hanh)
-12. [Xu ly su co](#12-xu-ly-su-co)
+11. [Buoc 9: Giam sat he thong (Monitoring)](#11-buoc-9-giam-sat-he-thong)
+12. [Quan ly va van hanh](#12-quan-ly-va-van-hanh)
+13. [Xu ly su co](#13-xu-ly-su-co)
 
 ---
 
@@ -26,11 +27,13 @@ Thu thap va phan tich du lieu thoi tiet thanh pho **New York** tu 2 nguon:
 - **Batch (Kaggle)**: Du lieu lich su 2012-2017, 36 thanh pho, moi gio 1 lan do
 - **Streaming (OpenWeather API)**: Du lieu thoi gian thuc New York, moi 5 phut
 
-Du lieu di qua 3 tang xu ly (Medallion Architecture) va mo hinh Machine Learning:
+Du lieu di qua 3 tang xu ly (Medallion Architecture), mo hinh Star Schema, va Machine Learning:
 
 ```text
-Bronze (Du lieu tho) -> Silver (Da lam sach) -> Gold (Da tong hop) -> Trino -> Superset
-                                              -> Feature Store -> ML Training -> Model API
+Landing (CSV goc) -> Bronze (Delta, raw) -> Silver (Da lam sach) -> Gold (Tong hop + Dim/Fact)
+                                                                       |
+                                                                       +-> Trino -> Superset (Dashboard)
+                                                                       +-> Feature Store -> ML Training -> Model API
 ```
 
 ### He thong gom nhung gi?
@@ -38,16 +41,21 @@ Bronze (Du lieu tho) -> Silver (Da lam sach) -> Gold (Da tong hop) -> Trino -> S
 | Service | Lam gi | URL |
 |---------|--------|-----|
 | **MinIO** | Luu tru du lieu (giong Amazon S3) | http://localhost:9001 |
-| **Spark** | Xu ly du lieu (ETL) | http://localhost:8080 |
-| **Airflow** | Dieu phoi tu dong (scheduler) | http://localhost:8082 |
-| **Kafka** | Truyen du lieu thoi gian thuc | - |
-| **NiFi** | Lay du lieu tu API | https://localhost:8443 |
-| **Trino** | Truy van SQL tren du lieu | http://localhost:8085 |
+| **Spark** (Master + Worker) | Xu ly du lieu (ETL) | http://localhost:8080 |
+| **Airflow** (Webserver + Scheduler) | Dieu phoi tu dong (scheduler) | http://localhost:8082 |
+| **Kafka** + Zookeeper | Truyen du lieu thoi gian thuc | - |
+| **NiFi** | Lay du lieu tu OpenWeather API | https://localhost:8443 |
+| **Trino** | Truy van SQL tren du lieu Delta | http://localhost:8085 |
 | **Superset** | Ve bieu do, tao dashboard | http://localhost:8088 |
 | **MLflow** | Quan ly model va experiment | http://localhost:5000 |
 | **Model API** | API du bao thoi tiet (FastAPI) | http://localhost:8000/docs |
+| **Redis** | Online Feature Store (cache real-time cho ML) | - |
 | **PostgreSQL** (x2) | Luu metadata cho Airflow va Superset | - |
-| **Redis** | Cache real-time cho ML | - |
+| **Prometheus** | Thu thap metrics giam sat | http://localhost:9090 |
+| **Grafana** | Dashboard giam sat he thong | http://localhost:3000 |
+| **cAdvisor** | Thu thap metrics tu Docker containers | http://localhost:8084 |
+
+**Tong cong: 18 containers** (bao gom 3 init containers chay 1 lan)
 
 ---
 
@@ -102,10 +110,10 @@ curl -s http://localhost:8085/v1/info | python3 -c "import sys,json; d=json.load
 ### 3.4 Kiem tra buckets MinIO da tao
 
 ```bash
-docker compose logs minio-init 
+docker compose logs minio-init
 ```
 
-**Ket qua mong doi**: 5 buckets: `bronze/`, `silver/`, `gold/`, `landing/`, `warehouse/`
+**Ket qua mong doi**: 5 buckets: `landing/`, `bronze/`, `silver/`, `gold/`, `warehouse/`
 
 ---
 
@@ -175,9 +183,9 @@ for c in resp.get('Contents', []):
 
 ## 5. Buoc 3: Chay Batch Pipeline
 
-Day la buoc chinh — xu ly du lieu Kaggle qua 3 tang Bronze -> Silver -> Gold.
+Day la buoc chinh — xu ly du lieu Kaggle qua Landing -> Bronze -> Silver -> Gold.
 
-### 5.1 Bronze: Nap du lieu tho (Kaggle CSV -> Bronze)
+### 5.1 Bronze: Nap du lieu tho (Landing CSV -> Bronze Delta)
 
 ```bash
 docker exec spark-master spark-submit \
@@ -186,17 +194,19 @@ docker exec spark-master spark-submit \
 ```
 
 **Job nay lam gi:**
-- Doc 6 file CSV tu `s3a://landing/weather/`
+- Doc 6 file CSV tu `s3a://landing/weather/` (Landing Zone)
 - Cac file CSV co dang "wide" (cot = thanh pho), chuyen sang dang "long" (moi dong = 1 do luong)
 - Join voi `city_attributes.csv` de lay thong tin country, lat, lon
-- Chuyen nhiet do tu Kelvin sang Celsius
+- Them metadata: `source`, `ingested_at`
 - Ghi vao `s3a://bronze/weather_batch/` (Delta format)
+
+> **Luu y**: Bronze giu nguyen raw data, chua doi don vi hay filter. Viec chuyen Kelvin -> Celsius nam o buoc Silver.
 
 **Ket qua mong doi**: `Written 1,629,108 records to Bronze`
 
 **Thoi gian**: ~2-3 phut
 
-### 5.2 Silver + Gold: Lam sach va tong hop (ETL)
+### 5.2 Silver + Gold + Dim/Fact: Lam sach, tong hop va mo hinh Star Schema
 
 ```bash
 docker exec spark-master spark-submit \
@@ -208,17 +218,31 @@ docker exec spark-master spark-submit \
 
 **Silver (Lam sach):**
 - Doc tu Bronze (ca batch va streaming)
+- Chuyen Kelvin -> Celsius (du lieu Kaggle)
 - Loc chi giu du lieu **New York**
 - Loc bo du lieu khong hop le (nhiet do ngoai [-80, 60]°C, do am ngoai [0, 100]%)
-- Loai bo ban ghi trung lap (deduplicate)
-- Ghi vao `s3a://silver/weather_clean/` bang MERGE (khong mat du lieu cu)
+- Kiem tra chat luong du lieu (Great Expectations)
+- Loai bo ban ghi trung lap (deduplicate tren city + recorded_dt)
+- Ghi vao `s3a://silver/weather_clean/` bang MERGE (upsert, khong mat du lieu cu)
+
+**Dimension Tables (Star Schema):**
+- `dim_city`: Thong tin thanh pho (city_id, city, country, latitude, longitude)
+- `dim_date`: Thong tin ngay (date_id, recorded_date, year, month, day)
+
+**Fact Table:**
+- `fact_weather_daily`: Bang fact lien ket dim_city va dim_date, co rolling avg 7 ngay va temp volatility. Partition theo year/month
 
 **Gold (Tong hop) — 3 bang:**
-- `gold_weather_daily_stats`: Thong ke theo ngay (avg/min/max nhiet do, do am, gio, dieu kien thoi tiet chu dao)
-- `gold_weather_monthly_stats`: Thong ke theo thang (xu huong mua, so ngay mua/nang)
-- `gold_weather_city_summary`: Tong quan New York (nhiet do moi nhat, trung binh tong the, so ngay theo doi)
+- `gold_weather_daily_stats`: Thong ke theo ngay (avg/min/max nhiet do, do am, gio, rolling avg 7 ngay, dieu kien thoi tiet chu dao)
+- `gold_weather_monthly_stats`: Thong ke theo thang (xu huong nhiet do, so ngay mua/nang)
+- `gold_weather_city_summary`: Tong quan New York (nhiet do moi nhat, trung binh tong the, so ngay theo doi, dieu kien thoi tiet chu dao)
 
-**Kiem tra ket qua**:
+**Optimization:**
+- OPTIMIZE + ZORDER (city_id, date_id) tren fact table
+- VACUUM (xoa file cu > 168 gio)
+
+### 5.3 Kiem tra ket qua
+
 ```bash
 docker exec spark-master bash -c 'cat > /tmp/check_counts.py << "PYEOF"
 from pyspark.sql import SparkSession
@@ -227,6 +251,9 @@ for name, path in [
     ("Bronze Batch", "s3a://bronze/weather_batch"),
     ("Bronze Streaming", "s3a://bronze/weather_streaming"),
     ("Silver", "s3a://silver/weather_clean"),
+    ("Dim City", "s3a://gold/dim_city"),
+    ("Dim Date", "s3a://gold/dim_date"),
+    ("Fact Weather Daily", "s3a://gold/fact_weather_daily"),
     ("Gold Daily", "s3a://gold/weather_daily_stats"),
     ("Gold Monthly", "s3a://gold/weather_monthly_stats"),
     ("Gold City Summary", "s3a://gold/weather_city_summary"),
@@ -246,6 +273,9 @@ spark-submit --master spark://spark-master:7077 /tmp/check_counts.py' 2>/dev/nul
 Bronze Batch: ~1,629,108 records
 Bronze Streaming: NOT FOUND (chua chay streaming)
 Silver: ~43,000+ records (chi New York, da dedup)
+Dim City: 1 record (New York)
+Dim Date: ~1,854 records (so ngay co data)
+Fact Weather Daily: ~1,854 records (partition theo year/month)
 Gold Daily: ~1,854 records (5 nam theo ngay)
 Gold Monthly: ~61 records (5 nam theo thang)
 Gold City Summary: 1 record (tong quan New York)
@@ -253,22 +283,42 @@ Gold City Summary: 1 record (tong quan New York)
 
 **Thoi gian**: ~3-5 phut
 
-### 5.3 Dang ky tables trong Trino
+### 5.4 Dang ky tables trong Trino
 
 ```bash
 docker exec -u root spark-master pip3 install requests -q
 docker exec spark-master python3 /opt/spark/jobs/register_trino_tables.py
 ```
 
-**Lam gi**: Goi Trino API de dang ky cac Delta tables, cho phep truy van SQL.
+**Lam gi**: Goi Trino REST API de dang ky 9 Delta tables, cho phep truy van SQL.
 
-**Ket qua mong doi**: `5 registered/existing, 1 skipped` (streaming Bronze chua co data nen skip)
+**Ket qua mong doi**: `8 registered/existing, 1 skipped` (streaming Bronze chua co data nen skip)
+
+**Cac tables duoc dang ky:**
+
+| Table | Mo ta |
+|-------|-------|
+| `delta.default.bronze_weather_batch` | Du lieu tho Kaggle |
+| `delta.default.bronze_weather_streaming` | Du lieu tho API (neu co) |
+| `delta.default.silver_weather_clean` | Du lieu da lam sach |
+| `delta.default.dim_city` | Dimension: thanh pho |
+| `delta.default.dim_date` | Dimension: ngay |
+| `delta.default.fact_weather_daily` | Fact: thong ke ngay (Star Schema) |
+| `delta.default.gold_weather_daily_stats` | Gold: thong ke ngay |
+| `delta.default.gold_weather_monthly_stats` | Gold: thong ke thang |
+| `delta.default.gold_weather_city_summary` | Gold: tong quan thanh pho |
 
 ---
 
 ## 6. Buoc 4: Kiem tra ket qua qua Trino
 
-### 6.1 Truy van Gold Daily Stats
+### 6.1 Xem danh sach tables
+
+```bash
+docker exec trino trino --execute "SHOW TABLES FROM delta.default"
+```
+
+### 6.2 Truy van Gold Daily Stats
 
 ```bash
 docker exec trino trino --execute \
@@ -278,7 +328,7 @@ docker exec trino trino --execute \
    ORDER BY recorded_date DESC LIMIT 10"
 ```
 
-### 6.2 Truy van Gold Monthly Stats
+### 6.3 Truy van Gold Monthly Stats
 
 ```bash
 docker exec trino trino --execute \
@@ -288,14 +338,31 @@ docker exec trino trino --execute \
    ORDER BY year_month DESC LIMIT 12"
 ```
 
-### 6.3 Truy van City Summary
+### 6.4 Truy van City Summary
 
 ```bash
 docker exec trino trino --execute \
   "SELECT * FROM delta.default.gold_weather_city_summary"
 ```
 
-### 6.4 Truy van Trino tuong tac (CLI)
+### 6.5 Truy van Star Schema (Dim/Fact)
+
+```bash
+# Kiem tra dim tables
+docker exec trino trino --execute "SELECT * FROM delta.default.dim_city"
+docker exec trino trino --execute "SELECT * FROM delta.default.dim_date LIMIT 10"
+
+# Query fact voi join dim
+docker exec trino trino --execute \
+  "SELECT d.year, d.month, AVG(f.avg_temperature) as avg_temp
+   FROM delta.default.fact_weather_daily f
+   JOIN delta.default.dim_date d ON f.date_id = d.date_id
+   GROUP BY d.year, d.month
+   ORDER BY d.year DESC, d.month DESC
+   LIMIT 12"
+```
+
+### 6.6 Truy van Trino tuong tac (CLI)
 
 ```bash
 docker exec -it trino trino
@@ -353,6 +420,7 @@ ORDER BY recorded_date
 - **Line Chart**: `avg_temperature` theo `recorded_date` (xu huong nhiet do)
 - **Bar Chart**: `avg_temperature` theo `year_month` (nhiet do theo thang)
 - **Pie Chart**: `clear_day_count` vs `rainy_day_count` (ti le thoi tiet)
+- **Area Chart**: `rolling_avg_temp` theo `recorded_date` tu `gold_weather_daily_stats` (xu huong 7 ngay)
 
 ### 7.5 Tao Dashboard
 
@@ -377,7 +445,7 @@ ORDER BY recorded_date
 ```bash
 python3 nifi/scripts/create-weather-flow.py \
   --nifi-url https://localhost:8443 \
-  --api-key b7c38c6d5f1a92667cb556dfb1d5ec03
+  --api-key <YOUR_API_KEY>
 ```
 
 **Lam gi**: Tao flow trong NiFi gom 4 processors:
@@ -399,7 +467,7 @@ python3 nifi/scripts/create-weather-flow.py \
 
 **Sau khi start**: NiFi se tu dong goi API moi 5 phut va gui du lieu vao Kafka.
 
-### 8.X Kiem tra du lieu da vao Kafka
+### 8.4 Kiem tra du lieu da vao Kafka
 
 ```bash
 docker exec kafka kafka-console-consumer \
@@ -411,15 +479,34 @@ docker exec kafka kafka-console-consumer \
 
 **Ket qua mong doi**: JSON weather data cua New York (temp, humidity, pressure...)
 
-### 8.4 Start Spark Streaming
+### 8.5 Bat Spark Streaming (Supervisor)
 
 ```bash
+# Bat DAG supervisor — tu dong kiem tra va khoi dong streaming moi 30 phut
+docker exec airflow-webserver airflow dags unpause weather_streaming
+
+# Hoac trigger thu cong lan dau
 docker exec airflow-webserver airflow dags trigger weather_streaming
 ```
 
-**Lam gi**: Chay Spark Structured Streaming, doc tu Kafka topic `weather-raw`, ghi vao `s3a://bronze/weather_streaming/` (Delta format). Job chay lien tuc 24h.
+**Lam gi**: DAG `weather_streaming` hoat dong theo **Supervisor Pattern**:
+- Moi 30 phut, kiem tra Spark REST API xem streaming job co dang chay khong
+- Neu **chua chay** -> khoi dong Spark Structured Streaming (Kafka -> Bronze Delta)
+- Neu **da chay** -> skip, khong chay trung
+- Neu streaming **crash hoac timeout** -> toi da 30 phut sau tu dong restart
+- Co 2 lan retry (cach nhau 2 phut) neu start that bai
 
-### 8.5 Xac nhan streaming hoat dong
+```text
+Moi 30 phut:
+  check_streaming_active
+      |
+      +---> start_weather_streaming    (neu CHUA chay)
+      +---> streaming_already_running  (neu DA chay -> skip)
+```
+
+> **Luu y**: `max_active_runs=1` dam bao chi co 1 DAG run tai mot thoi diem, tranh nhieu streaming job chong nhau.
+
+### 8.6 Xac nhan streaming hoat dong
 
 Doi 5-10 phut (cho NiFi goi API it nhat 1 lan), sau do:
 
@@ -444,10 +531,31 @@ print(f'Streaming Bronze files: {resp.get(\"KeyCount\", 0)}')
 
 | DAG | Chay khi nao | Lam gi |
 |-----|-------------|--------|
-| `weather_pipeline` | Tu dong moi 1 gio | Check CSV moi -> Ingest -> ETL -> Validate -> Register Trino |
-| `weather_streaming` | Trigger thu cong 1 lan | Chay Spark Streaming lien tuc (doc Kafka -> Bronze) |
+| `weather_pipeline` | Tu dong moi 1 gio | Check CSV -> Ingest -> Validate Bronze -> ETL -> Validate Silver/Gold -> Register Trino |
+| `weather_streaming` | Tu dong moi 30 phut (supervisor) | Kiem tra streaming dang chay khong -> neu chua thi start, neu roi thi skip. Tu restart khi crash |
+| `ml_pipeline` | Tu dong 2 AM hang ngay | Update features -> Sync Redis -> Train model -> Verify -> Reload API |
 
-### 9.2 Bat tu dong
+### 9.2 Luong xu ly cua weather_pipeline
+
+```text
+check_csv_in_landing
+    |
+    +---> ingest_csv_to_bronze (neu co CSV moi)
+    +---> skip_csv_ingest (neu khong co)
+              |
+              v
+      validate_bronze          <-- Kiem tra Bronze TRUOC khi ETL
+              |
+              v
+      run_weather_etl          <-- Silver + Gold + Dim/Fact
+              |
+     +--------+--------+
+     v                  v
+validate_outputs    register_trino_tables
+(silver + gold)     (9 Delta tables)
+```
+
+### 9.3 Bat tu dong
 
 ```bash
 # Bat pipeline tu dong chay moi gio
@@ -455,9 +563,12 @@ docker exec airflow-webserver airflow dags unpause weather_pipeline
 
 # Bat streaming (neu da setup o Buoc 6)
 docker exec airflow-webserver airflow dags unpause weather_streaming
+
+# Bat ML pipeline (neu da setup o Buoc 8)
+docker exec airflow-webserver airflow dags unpause ml_pipeline
 ```
 
-### 9.3 Kiem tra tren Airflow UI
+### 9.4 Kiem tra tren Airflow UI
 
 1. Mo **http://localhost:8082**
 2. Dang nhap: `airflow` / `airflow`
@@ -465,25 +576,37 @@ docker exec airflow-webserver airflow dags unpause weather_streaming
 
 **Y nghia cac cot:**
 - **DAG**: Ten pipeline
-- **Schedule**: Lich chay (vd: `@hourly`)
+- **Schedule**: Lich chay (vd: `@hourly`, `0 2 * * *`)
 - **Last Run**: Lan chay gan nhat
 - **Runs**: So lan da chay (xanh = thanh cong, do = that bai)
 
 4. Click vao ten DAG -> Tab **"Graph"** de xem luong tasks
 
-### 9.4 Sau khi bat tu dong
+### 9.5 Sau khi bat tu dong
 
-**Ban khong can lam gi them.** Moi gio, Airflow se:
+**Ban khong can lam gi them.** He thong tu van hanh:
 
+**Moi 1 gio** (`weather_pipeline`):
 1. Kiem tra co CSV moi trong `landing/weather/` khong
-2. Neu co -> chay `batch_bronze_weather.py`
-3. Chay `weather_etl.py` (Silver + Gold)
-4. Validate du lieu Bronze/Silver/Gold
-5. Dang ky tables trong Trino
+2. Neu co -> chay `batch_bronze_weather.py` (ingest)
+3. Validate Bronze data (row counts, null checks, freshness)
+4. Chay `weather_etl.py` (Silver + Gold + Dim/Fact)
+5. Validate Silver va Gold song song
+6. Dang ky 9 tables trong Trino
+
+**Moi 30 phut** (`weather_streaming`):
+1. Kiem tra Spark Streaming co dang chay khong (qua Spark REST API)
+2. Neu chua -> khoi dong streaming job (Kafka -> Bronze Delta)
+3. Neu roi -> skip, khong lam gi
+4. Neu streaming crash -> lan kiem tra tiep theo se tu khoi dong lai
+
+**Moi ngay luc 2 AM** (`ml_pipeline`):
+1. Update Feature Store tu Silver/Gold
+2. Sync features sang Redis
+3. Huan luyen lai model
+4. Verify va reload Model Serving API
 
 Neu ban upload CSV moi vao MinIO -> pipeline se tu dong xu ly trong vong 1 gio.
-
----
 
 ---
 
@@ -504,7 +627,17 @@ docker exec spark-master spark-submit \
   /opt/spark/jobs/feature_store.py
 ```
 
-### 10.2 Huan luyen Mo hinh (Train Model)
+### 10.2 Dong bo Features sang Redis (Online Feature Store)
+
+```bash
+docker exec spark-master spark-submit \
+  --master spark://spark-master:7077 \
+  --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
+  --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
+  /opt/spark/jobs/sync_redis_features.py
+```
+
+### 10.3 Huan luyen Mo hinh (Train Model)
 
 Chay pipeline huan luyen va danh gia (RandomForest, GradientBoosting, Ridge), ghi log ket qua len MLflow:
 
@@ -518,7 +651,7 @@ docker exec spark-master spark-submit \
 
 Ban co the xem ket qua huan luyen tai **MLflow UI**: http://localhost:5000
 
-### 10.3 Chuyen Mo hinh sang Production
+### 10.4 Chuyen Mo hinh sang Production
 
 Truoc khi thu nghiem API, ban can chuyen mo hinh (version 1) sang trang thai Production va khoi dong lai container server:
 
@@ -527,7 +660,7 @@ curl -X POST "http://localhost:8000/models/1/transition?stage=Production"
 docker restart model-serving
 ```
 
-### 10.4 Thu nghiem API Du bao
+### 10.5 Thu nghiem API Du bao
 
 Gui request den Model Serving API de lay du bao nhiet do:
 
@@ -547,18 +680,45 @@ curl -X POST http://localhost:8000/predict \
 
 Xem tai lieu API (Swagger UI): http://localhost:8000/docs
 
-### 10.5 Bat tu dong hoa ML Pipeline
+### 10.6 Bat tu dong hoa ML Pipeline
 
-ML pipeline cung co 1 DAG trong Airflow de tu dong cap nhat du lieu feature, huan luyen lai mo hinh tren Airflow moi ngay. Tuy nhien buoc chuyen stage model sang Production moi se can lam thu cong hoac them automation trong MLflow:
+ML pipeline co DAG trong Airflow chay tu dong moi ngay luc 2 AM:
 
 ```bash
-# Bat pipeline ML tu dong
 docker exec airflow-webserver airflow dags unpause ml_pipeline
 ```
 
+**Luong xu ly cua ml_pipeline:**
+```text
+check_feature_store_data -> update_feature_store -> sync_features_to_redis
+    -> train_ml_model -> verify_model_registration -> reload_model_in_serving
+```
+
+> **Luu y**: Buoc chuyen model sang Production (10.4) can lam thu cong lan dau. Sau do ML pipeline se tu dong huan luyen lai va cap nhat model moi.
+
 ---
 
-## 11. Quan ly va van hanh
+## 11. Buoc 9: Giam sat he thong
+
+### 11.1 Grafana Dashboard
+
+1. Mo **http://localhost:3000**
+2. Dang nhap: `admin` / `admin` (doi mat khau lan dau neu can)
+3. Grafana da cau hinh san Prometheus lam data source
+
+### 11.2 Prometheus Metrics
+
+1. Mo **http://localhost:9090**
+2. Thu query: `container_cpu_usage_seconds_total` de xem CPU cua cac containers
+3. Hoac: `container_memory_usage_bytes` de xem RAM
+
+### 11.3 cAdvisor (Container Metrics)
+
+Mo **http://localhost:8084** de xem chi tiet CPU, RAM, Network, Disk cua tung container.
+
+---
+
+## 12. Quan ly va van hanh
 
 ### Xem logs
 
@@ -574,6 +734,12 @@ docker compose logs -f nifi
 
 # Logs cua Kafka
 docker compose logs -f kafka
+
+# Logs cua MLflow
+docker compose logs -f mlflow
+
+# Logs cua Model Serving
+docker compose logs -f model-serving
 ```
 
 ### Dung / Khoi dong lai
@@ -599,6 +765,9 @@ docker compose up -d --build spark-master spark-worker
 
 # Sua Dockerfile -> Rebuild service tuong ung
 docker compose up -d --build airflow-webserver airflow-scheduler
+
+# Sua Model Serving -> Rebuild
+docker compose up -d --build model-serving
 ```
 
 ### Chay ETL thu cong
@@ -615,9 +784,9 @@ docker exec airflow-webserver airflow dags trigger weather_pipeline
 
 ---
 
-## 12. Xu ly su co
+## 13. Xu ly su co
 
-### 12.1 Kiem tra tong quan trang thai he thong
+### 13.1 Kiem tra tong quan trang thai he thong
 
 ```bash
 # Kiem tra tat ca containers
@@ -629,14 +798,14 @@ import boto3
 s3 = boto3.client('s3', endpoint_url='http://minio:9000',
     aws_access_key_id='admin', aws_secret_access_key='admin123456',
     region_name='us-east-1')
-for bucket in ['bronze', 'silver', 'gold']:
+for bucket in ['landing', 'bronze', 'silver', 'gold', 'warehouse']:
     resp = s3.list_objects_v2(Bucket=bucket, MaxKeys=100)
     count = resp.get('KeyCount', 0)
     print(f'{bucket.upper()}: {count} files')
 "
 ```
 
-### 12.2 Chay validation de kiem tra du lieu
+### 13.2 Chay validation de kiem tra du lieu
 
 ```bash
 # Validate Bronze (row counts, null checks, freshness)
@@ -654,7 +823,7 @@ docker exec spark-master spark-submit --master spark://spark-master:7077 \
 
 **Ket qua mong doi**: Tat ca phai hien `validation PASSED`
 
-### 12.3 Spark Master/Worker khong start
+### 13.3 Spark Master/Worker khong start
 
 ```bash
 docker compose logs spark-master | tail -10
@@ -663,7 +832,7 @@ docker compose logs spark-master | tail -10
 - Neu `Permission denied`: Rebuild image: `docker compose up -d --build spark-master spark-worker`
 - Neu `OOM` (Out of Memory): Tang RAM hoac giam `SPARK_WORKER_MEMORY` trong docker-compose.yml
 
-### 12.4 Airflow DAG fail
+### 13.4 Airflow DAG fail
 
 **Buoc 1: Xac dinh DAG va task nao fail**
 
@@ -736,6 +905,7 @@ docker exec airflow-scheduler airflow dags list
 # Unpause
 docker exec airflow-webserver airflow dags unpause weather_pipeline
 docker exec airflow-webserver airflow dags unpause weather_streaming
+docker exec airflow-webserver airflow dags unpause ml_pipeline
 ```
 
 #### Clear tasks fail de chay lai
@@ -743,13 +913,13 @@ docker exec airflow-webserver airflow dags unpause weather_streaming
 ```bash
 # Clear tat ca tasks fail cua 1 DAG (se chay lai tu dau)
 docker exec airflow-scheduler airflow tasks clear weather_pipeline \
-  -s 2026-03-28 -e 2026-03-29 -y
+  -s 2024-01-01 -e 2026-12-31 -y
 
 # Hoac trigger DAG run moi
 docker exec airflow-webserver airflow dags trigger weather_pipeline
 ```
 
-### 12.5 NiFi khong gui du lieu vao Kafka
+### 13.5 NiFi khong gui du lieu vao Kafka
 
 **Buoc 1: Kiem tra processors co dang Running**
 
@@ -794,115 +964,3 @@ python3 nifi/scripts/create-weather-flow.py \
 3. Right-click tung connection -> **Empty queue** (lam sach queue)
 4. Quay lai root (click "NiFi Flow" o breadcrumb duoi cung)
 5. Right-click process group -> **Delete**
-
-**Buoc 3: Xac nhan du lieu da vao Kafka**
-
-```bash
-docker exec kafka kafka-console-consumer \
-  --bootstrap-server kafka:9092 \
-  --topic weather-raw \
-  --from-beginning \
-  --timeout-ms 5000
-```
-
-### 12.6 Trino khong query duoc
-
-```bash
-# Kiem tra tables da dang ky
-docker exec trino trino --execute "SHOW TABLES FROM delta.default"
-```
-
-- Neu khong co tables: Chay lai `docker exec spark-master python3 /opt/spark/jobs/register_trino_tables.py`
-- Neu loi connection: Kiem tra Trino dang chay: `docker compose ps trino`
-
-### 12.7 Superset khong ket noi Trino
-
-- Kiem tra database connection: **Settings** -> **Database Connections** -> **Trino Lakehouse** -> **Test Connection**
-- Neu loi: Chay lai `bash superset/setup_trino_connection.sh`
-
-### 12.8 MinIO khong doc duoc files
-
-```bash
-docker exec spark-master python3 -c "
-import boto3
-s3 = boto3.client('s3', endpoint_url='http://minio:9000',
-    aws_access_key_id='admin', aws_secret_access_key='admin123456',
-    region_name='us-east-1')
-for bucket in ['landing', 'bronze', 'silver', 'gold']:
-    resp = s3.list_objects_v2(Bucket=bucket, MaxKeys=50)
-    count = resp.get('KeyCount', 0)
-    print(f'{bucket}: {count} files')
-"
-```
-
-- Su dung boto3 thay vi `mc` de upload (mc co the gay loi inconsistency)
-
-### 12.9 Streaming Bronze co 0 files (Kafka co data nhung Bronze trong)
-
-**Nguyen nhan**: Spark Streaming job chua chay hoac da bi kill.
-
-**Kiem tra**:
-```bash
-# Xem streaming task co dang running
-docker exec airflow-scheduler airflow tasks states-for-dag-run weather_streaming <run_id>
-```
-
-**Cach fix**:
-```bash
-# Trigger lai streaming DAG
-docker exec airflow-webserver airflow dags trigger weather_streaming
-```
-
-### 12.10 Reset toan bo pipeline (chay lai tu dau)
-
-```bash
-# 1. Dung tat ca
-docker compose down
-
-# 2. Xoa toan bo data (volumes)
-docker compose down -v
-
-# 3. Khoi dong lai
-docker compose up -d
-
-# 4. Doi services san sang (1-2 phut)
-# 5. Upload lai CSV (Buoc 4.2)
-# 6. Chay lai pipeline (Buoc 5)
-```
-
----
-
-## Tham khao nhanh
-
-### URLs
-
-| Service | URL | Dang nhap |
-|---------|-----|-----------|
-| MinIO Console | http://localhost:9001 | admin / admin123456 |
-| Airflow | http://localhost:8082 | airflow / airflow |
-| Superset | http://localhost:8088 | admin / admin |
-| Spark Master | http://localhost:8080 | — |
-| Trino | http://localhost:8085 | — |
-| NiFi | https://localhost:8443 | admin / admin123456789 |
-| MLflow UI | http://localhost:5000 | — |
-| Model API Docs | http://localhost:8000/docs | — |
-
-### Lenh hay dung
-
-```bash
-docker compose up -d                 # Khoi dong
-docker compose down                  # Dung
-docker compose ps                    # Trang thai
-docker compose logs -f <service>     # Xem logs
-
-# Spark jobs
-docker exec spark-master spark-submit --master spark://spark-master:7077 /opt/spark/jobs/<job>.py
-
-# Trino CLI
-docker exec -it trino trino
-
-# Airflow
-docker exec airflow-webserver airflow dags list
-docker exec airflow-webserver airflow dags trigger <dag_id>
-docker exec airflow-webserver airflow dags unpause <dag_id>
-```
