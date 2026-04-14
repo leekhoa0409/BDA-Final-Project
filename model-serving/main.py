@@ -45,11 +45,12 @@ model = None
 scaler_data = None
 feature_cols = None
 model_version = None
+model_algorithm = "N/A"
 
 
 @app.on_event("startup")
 async def load_model():
-    global model, scaler_data, feature_cols, model_version
+    global model, scaler_data, feature_cols, model_version, model_algorithm
     
     try:
         mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
@@ -87,21 +88,34 @@ async def load_model():
             scaler_data = None
             feature_cols = None
         
-        # Get model version if model exists
+        # Get model version and tags if model exists
         if model is not None:
             try:
                 client = mlflow.MlflowClient()
-                latest = client.get_latest_model_versions(MODEL_NAME, stages=[STAGE])
+                latest = client.get_latest_versions(MODEL_NAME, stages=[STAGE])
+                
+                if not latest:
+                    latest = client.get_latest_versions(MODEL_NAME)
+                    if latest:
+                        logger.info(f"No {STAGE} model found, falling back to latest version {latest[0].version}")
+                    
                 if latest:
                     model_version = latest[0].version
+                    # Fetch tags to get the algorithm name
+                    version_details = client.get_model_version(MODEL_NAME, model_version)
+                    model_algorithm = version_details.tags.get("algorithm", "Unknown Algorithm")
                 else:
                     model_version = "unknown"
-            except Exception:
+                    model_algorithm = "N/A"
+            except Exception as e:
+                logger.warning(f"Could not fetch model metadata: {e}")
                 model_version = "unknown"
+                model_algorithm = "N/A"
         else:
             model_version = "no_model"
+            model_algorithm = "Awaiting Training"
         
-        logger.info(f"Model version: {model_version}, model loaded: {model is not None}")
+        logger.info(f"Model version: {model_version}, Algorithm: {model_algorithm}")
         
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
@@ -121,6 +135,9 @@ class PredictionRequest(BaseModel):
     temp_lag_6h: Optional[float] = Field(None, description="Temperature 6 hours ago")
     temp_lag_24h: Optional[float] = Field(None, description="Temperature 24 hours ago")
     temp_24h_ma: Optional[float] = Field(None, description="24-hour moving average temperature")
+    temp_168h_ma: Optional[float] = Field(None, description="168-hour moving average temperature")
+    humid_24h_ma: Optional[float] = Field(None, description="24-hour moving average humidity")
+    temp_24h_std: Optional[float] = Field(None, description="24-hour temperature standard deviation")
     condition_encoded: Optional[int] = Field(None, description="Weather condition encoded")
 
 
@@ -137,7 +154,8 @@ async def health():
     return {
         "status": "healthy",
         "model_loaded": model is not None,
-        "model_version": model_version
+        "model_version": model_version,
+        "model_algorithm": model_algorithm
     }
 
 
@@ -177,6 +195,9 @@ def prepare_features(req: PredictionRequest, cached_features: Optional[Dict] = N
         'temp_lag_6h': req.temp_lag_6h if req.temp_lag_6h is not None else defaults['temp_lag_6h'],
         'temp_lag_24h': req.temp_lag_24h if req.temp_lag_24h is not None else defaults['temp_lag_24h'],
         'temp_24h_ma': req.temp_24h_ma if req.temp_24h_ma is not None else defaults['temp_24h_ma'],
+        'temp_168h_ma': req.temp_168h_ma if req.temp_168h_ma is not None else defaults.get('temp_168h_ma', req.temperature),
+        'humid_24h_ma': req.humid_24h_ma if req.humid_24h_ma is not None else defaults.get('humid_24h_ma', req.humidity),
+        'temp_24h_std': req.temp_24h_std if req.temp_24h_std is not None else defaults.get('temp_24h_std', 0.0),
         'condition_encoded': req.condition_encoded if req.condition_encoded is not None else defaults['condition_encoded'],
     }
     
@@ -209,10 +230,8 @@ async def predict(request: PredictionRequest):
     start_time = time.time()
     
     try:
-        # Handle case where model is not loaded yet
         if model is None:
             logger.warning("Model not loaded, using simple fallback prediction")
-            # Simple fallback: temperature + small adjustment based on time of day
             prediction = request.temperature + (1 if request.hour > 12 else -1) * 0.5
             lower = prediction - 2.0
             upper = prediction + 2.0

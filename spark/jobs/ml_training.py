@@ -34,7 +34,7 @@ def create_spark_session():
 
 
 def load_training_data(spark, feature_path):
-    df = spark.read.format("delta").load(feature_path)
+    df = spark.read.format("delta").load(feature_path).orderBy("recorded_at")
     pdf = df.toPandas()
     logger.info(f"Loaded {len(pdf)} records from {feature_path}")
     return pdf
@@ -50,7 +50,7 @@ def engineer_features(df):
         )
     
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    df[numeric_cols] = df[numeric_cols].fillna(method='ffill').fillna(0)
+    df[numeric_cols] = df[numeric_cols].ffill().fillna(0)
     
     return df
 
@@ -165,15 +165,38 @@ def run_mlflow_experiment(X, y, feature_cols):
         best = max(results, key=lambda x: x[1]["r2"])
         logger.info(f"Best model: {best[0]} with R2: {best[1]['r2']:.4f}")
         
-        model_uri = f"runs:/{mlflow.active_run().info.run_id}/gradient_boosting_model"
+        model_artifacts = {
+            "RandomForest": "random_forest_model",
+            "GradientBoosting": "gradient_boosting_model",
+            "Ridge": "ridge_model"
+        }
+        best_model_name = best[0]
+        model_uri = f"runs:/{mlflow.active_run().info.run_id}/{model_artifacts[best_model_name]}"
+        
         registered = mlflow.register_model(model_uri, "weather-forecast-model")
         
         client = MlflowClient()
+        import time
+        time.sleep(2)
+        
         client.set_model_version_tag(
             "weather-forecast-model",
             registered.version,
             "status",
             "production"
+        )
+        client.set_model_version_tag(
+            "weather-forecast-model", 
+            registered.version,
+            "algorithm",
+            best_model_name
+        )
+        
+        # Transition to Production stage
+        client.transition_model_version_stage(
+            name="weather-forecast-model",
+            version=registered.version,
+            stage="Production"
         )
         
         logger.info(f"Registered model version: {registered.version}")
@@ -205,9 +228,7 @@ def main():
     spark = create_spark_session()
     
     try:
-        logger.info("=" * 60)
         logger.info("ML TRAINING: Weather Forecasting Model")
-        logger.info("=" * 60)
         
         feature_path = f"{FEATURE_STORE_PATH}/training_data"
         df = load_training_data(spark, feature_path)
@@ -220,11 +241,9 @@ def main():
         best = max(results, key=lambda x: x[1]["r2"])
         save_scaler(best[3], feature_cols)
         
-        logger.info("=" * 60)
         logger.info("ML Training completed!")
         logger.info(f"Best model: {best[0]} (R2: {best[1]['r2']:.4f})")
         logger.info("MLflow UI: http://localhost:5000")
-        logger.info("=" * 60)
         
     except Exception as e:
         logger.error(f"ML training failed: {e}", exc_info=True)
