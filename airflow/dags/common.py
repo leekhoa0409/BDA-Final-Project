@@ -20,6 +20,7 @@ SPARK_SUBMIT_BASE = (
     f'--conf spark.hadoop.fs.s3a.path.style.access=true '
     f'--conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem '
     f'--conf spark.hadoop.fs.s3a.connection.ssl.enabled=false '
+    f'--conf spark.cores.max=2'
 )
 
 SPARK_SUBMIT_STREAMING = SPARK_SUBMIT_BASE
