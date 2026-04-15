@@ -135,6 +135,7 @@ services:
       MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT}
     volumes:
       - ./spark/jobs:/opt/spark/jobs
+      - ./spark/metrics.properties:/opt/spark/conf/metrics.properties
     networks:
       - lakehouse
 
@@ -162,6 +163,7 @@ services:
       MLFLOW_S3_ENDPOINT_URL: ${MINIO_ENDPOINT}
     volumes:
       - ./spark/jobs:/opt/spark/jobs
+      - ./spark/metrics.properties:/opt/spark/conf/metrics.properties
     networks:
       - lakehouse
 
@@ -275,6 +277,10 @@ services:
       AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR}
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
       AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
+      AIRFLOW__METRICS__STATSD_ON: ${AIRFLOW__METRICS__STATSD_ON}
+      AIRFLOW__METRICS__STATSD_HOST: ${AIRFLOW__METRICS__STATSD_HOST}
+      AIRFLOW__METRICS__STATSD_PORT: ${AIRFLOW__METRICS__STATSD_PORT}
+      AIRFLOW__METRICS__STATSD_PREFIX: ${AIRFLOW__METRICS__STATSD_PREFIX}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
       AIRFLOW__WEBSERVER__WTF_CSRF_ENABLED: 'False'
       AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
@@ -313,6 +319,10 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
       AIRFLOW__SCHEDULER__SCHEDULER_ZOMBIE_TASK_THRESHOLD: '3600'
+      AIRFLOW__METRICS__STATSD_ON: ${AIRFLOW__METRICS__STATSD_ON}
+      AIRFLOW__METRICS__STATSD_HOST: ${AIRFLOW__METRICS__STATSD_HOST}
+      AIRFLOW__METRICS__STATSD_PORT: ${AIRFLOW__METRICS__STATSD_PORT}
+      AIRFLOW__METRICS__STATSD_PREFIX: ${AIRFLOW__METRICS__STATSD_PREFIX}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
@@ -467,6 +477,18 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana_data:/var/lib/grafana
+    networks:
+      - lakehouse
+  
+  airflow-exporter:
+    image: prom/statsd-exporter:latest
+    container_name: airflow-exporter
+    command:
+      - "--web.listen-address=:9102"
+      - "--statsd.listen-udp=:9125"
+    ports:
+      - "9102:9102"
+      - "9125:9125/udp"
     networks:
       - lakehouse
 

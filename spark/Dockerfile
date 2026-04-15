@@ -38,6 +38,14 @@ RUN curl -L -o /opt/spark/jars/delta-spark_2.12-3.1.0.jar \
     curl -L -o /opt/spark/jars/commons-pool2-2.11.1.jar \
     https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar
 
+# Add Prometheus servlet support
+RUN curl -L -o /opt/spark/jars/simpleclient-0.16.0.jar \
+    https://repo1.maven.org/maven2/io/prometheus/simpleclient/0.16.0/simpleclient-0.16.0.jar && \
+    curl -L -o /opt/spark/jars/simpleclient_common-0.16.0.jar \
+    https://repo1.maven.org/maven2/io/prometheus/simpleclient_common/0.16.0/simpleclient_common-0.16.0.jar && \
+    curl -L -o /opt/spark/jars/simpleclient_servlet-0.16.0.jar \
+    https://repo1.maven.org/maven2/io/prometheus/simpleclient_servlet/0.16.0/simpleclient_servlet-0.16.0.jar
+
 # Copy config template and entrypoint
 COPY spark-defaults.conf.template /opt/spark/conf/spark-defaults.conf.template
 COPY entrypoint.sh /opt/spark/entrypoint.sh
@@ -47,6 +55,7 @@ RUN chmod +x /opt/spark/entrypoint.sh && \
     chmod 775 /opt/spark/conf/
 
 ENV SPARK_CONF_DIR=/tmp/spark-conf
+ENV SPARK_METRICS_CONF=/opt/spark/conf/metrics.properties
 
 USER spark
 
