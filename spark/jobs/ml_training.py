@@ -192,7 +192,6 @@ def run_mlflow_experiment(X, y, feature_cols):
             best_model_name
         )
         
-        # Transition to Production stage
         client.transition_model_version_stage(
             name="weather-forecast-model",
             version=registered.version,

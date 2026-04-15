@@ -4,12 +4,14 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     col, avg, stddev,
     lag, lead, month, dayofweek,
-    hour, weekofyear, count
+    hour, weekofyear, count,
+    coalesce, lit
 )
 from pyspark.sql.window import Window
 
 from config import (
-    SILVER_WEATHER_PATH, FACT_WEATHER_DAILY_STATS_PATH,
+    SILVER_WEATHER_PATH, BRONZE_WEATHER_STREAMING_PATH,
+    FACT_WEATHER_DAILY_STATS_PATH,
     FEATURE_STORE_PATH, ANALYSIS_CITY
 )
 
@@ -41,11 +43,40 @@ def _path_exists(spark, path):
         return False
 
 
+def _load_combined_data(spark, city):
+    from pyspark.sql.functions import row_number
+    from pyspark.sql.window import Window
+    
+    logger.info("Loading combined data from Silver + Bronze streaming")
+    
+    df_silver = spark.read.format("delta").load(SILVER_WEATHER_PATH)
+    df_silver = df_silver.filter(col("city") == city).withColumn("source", lit("silver"))
+    
+    try:
+        df_bronze = spark.read.format("delta").load(BRONZE_WEATHER_STREAMING_PATH)
+        df_bronze = df_bronze.filter(col("city") == city).withColumn("source", lit("bronze"))
+        
+        df_combined = df_silver.unionByName(df_bronze, allowEmptyMerge=True)
+        
+        w_dedup = Window.partitionBy("city", "recorded_at").orderBy(
+            col("source").desc()  # bronze > silver (prioritize streaming)
+        )
+        df_combined = (df_combined.withColumn("rn", row_number().over(w_dedup))
+                      .filter(col("rn") == 1)
+                      .drop("rn", "source")
+                      .orderBy("recorded_at"))
+        
+        logger.info(f"Combined {df_combined.count()} records (Bronze prioritized over Silver)")
+        return df_combined
+    except Exception as e:
+        logger.warning(f"Bronze streaming not available: {e}. Using Silver only.")
+        return df_silver.drop("source").orderBy("recorded_at")
+
+
 def create_hourly_features(spark, city=ANALYSIS_CITY):
     logger.info(f"Creating hourly features for {city}")
     
-    df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
-    df = df.filter(col("city") == city)
+    df = _load_combined_data(spark, city)
     
     w_lag = Window.partitionBy("city").orderBy("recorded_at")
     w_24h = Window.partitionBy("city").orderBy("recorded_at").rowsBetween(-24, 0)
@@ -64,17 +95,17 @@ def create_hourly_features(spark, city=ANALYSIS_CITY):
         dayofweek("recorded_at").alias("day_of_week"),
         month("recorded_at").alias("month"),
         weekofyear("recorded_at").alias("week_of_year"),
-        lag("temperature", 1).over(w_lag).alias("temp_lag_1h"),
-        lag("temperature", 3).over(w_lag).alias("temp_lag_3h"),
-        lag("temperature", 6).over(w_lag).alias("temp_lag_6h"),
-        lag("temperature", 12).over(w_lag).alias("temp_lag_12h"),
-        lag("temperature", 24).over(w_lag).alias("temp_lag_24h"),
-        lag("humidity", 1).over(w_lag).alias("humid_lag_1h"),
-        lag("pressure", 1).over(w_lag).alias("pres_lag_1h"),
-        avg("temperature").over(w_24h).alias("temp_24h_ma"),
-        avg("temperature").over(w_168h).alias("temp_168h_ma"),
-        avg("humidity").over(w_24h).alias("humid_24h_ma"),
-        stddev("temperature").over(w_24h).alias("temp_24h_std"),
+        coalesce(lag("temperature", 1).over(w_lag), col("temperature")).alias("temp_lag_1h"),
+        coalesce(lag("temperature", 3).over(w_lag), col("temperature")).alias("temp_lag_3h"),
+        coalesce(lag("temperature", 6).over(w_lag), col("temperature")).alias("temp_lag_6h"),
+        coalesce(lag("temperature", 12).over(w_lag), col("temperature")).alias("temp_lag_12h"),
+        coalesce(lag("temperature", 24).over(w_lag), col("temperature")).alias("temp_lag_24h"),
+        coalesce(lag("humidity", 1).over(w_lag), col("humidity")).alias("humid_lag_1h"),
+        coalesce(lag("pressure", 1).over(w_lag), col("pressure")).alias("pres_lag_1h"),
+        coalesce(avg("temperature").over(w_24h), col("temperature")).alias("temp_24h_ma"),
+        coalesce(avg("temperature").over(w_168h), col("temperature")).alias("temp_168h_ma"),
+        coalesce(avg("humidity").over(w_24h), col("humidity")).alias("humid_24h_ma"),
+        coalesce(stddev("temperature").over(w_24h), lit(0.0)).alias("temp_24h_std"),
     ).filter(col("recorded_at").isNotNull())
     
     return features
@@ -116,8 +147,7 @@ def create_daily_features(spark, city=ANALYSIS_CITY):
 def create_training_data(spark, city=ANALYSIS_CITY, forecast_horizon=24):
     logger.info(f"Creating training data with {forecast_horizon}h forecast horizon")
     
-    df = spark.read.format("delta").load(SILVER_WEATHER_PATH)
-    df = df.filter(col("city") == city)
+    df = _load_combined_data(spark, city)
     
     w_lead = Window.partitionBy("city").orderBy("recorded_at")
     w_lag = Window.partitionBy("city").orderBy("recorded_at")

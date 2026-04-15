@@ -69,6 +69,8 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    command: >
+      bash -c "rm -f /var/lib/kafka/data/meta.properties && /etc/confluent/docker/run"
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
