@@ -14,6 +14,7 @@ from config import (
     SILVER_WEATHER_PATH, FACT_WEATHER_DAILY_STATS_PATH,
     FACT_WEATHER_MONTHLY_STATS_PATH, FACT_WEATHER_CITY_SUMMARY_PATH,
     DIM_CITY_PATH, DIM_DATE_PATH,
+    FEATURE_STORE_PATH,
 )
 
 logging.basicConfig(
@@ -35,6 +36,9 @@ TABLES = {
     "fact_weather_daily_stats": FACT_WEATHER_DAILY_STATS_PATH.replace("s3a://", "s3://"),
     "fact_weather_monthly_stats": FACT_WEATHER_MONTHLY_STATS_PATH.replace("s3a://", "s3://"),
     "fact_weather_city_summary": FACT_WEATHER_CITY_SUMMARY_PATH.replace("s3a://", "s3://"),
+    "hourly_weather": f"{FEATURE_STORE_PATH}/hourly_weather".replace("s3a://", "s3://"),
+    "daily_weather": f"{FEATURE_STORE_PATH}/daily_weather".replace("s3a://", "s3://"),
+    "training_data": f"{FEATURE_STORE_PATH}/training_data".replace("s3a://", "s3://"),
 }
 
 SCHEMA_NAME = "default"

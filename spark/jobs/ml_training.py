@@ -179,6 +179,11 @@ def run_mlflow_experiment(X, y, feature_cols):
         import time
         time.sleep(2)
         
+        # Archive all existing Production versions before adding new one
+        for v in client.get_latest_versions("weather-forecast-model", stages=["Production"]):
+            client.transition_model_version_stage("weather-forecast-model", v.version, stage="Archived")
+            logger.info(f"Archived version {v.version}")
+        
         client.set_model_version_tag(
             "weather-forecast-model",
             registered.version,
