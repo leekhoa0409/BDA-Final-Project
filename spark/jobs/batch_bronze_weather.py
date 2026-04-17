@@ -20,7 +20,7 @@ from pyspark.sql.functions import (
 )
 from pyspark.sql.types import DoubleType
 
-from config import LANDING_WEATHER_PATH, BRONZE_WEATHER_BATCH_PATH
+from config import LANDING_WEATHER_PATH, LANDING_WEATHER_PROCESSED_PATH, BRONZE_WEATHER_BATCH_PATH
 
 logging.basicConfig(
     level=logging.INFO,
@@ -105,6 +105,47 @@ def unpivot_weather_csv(spark, file_path, attribute_name):
     return unpivoted
 
 
+def _move_csv_to_processed(landing_path):
+    """Move CSV files from landing to processed/ subfolder after ingestion.
+
+    This prevents check_landing_zone from picking up the same files again.
+    Uses Hadoop FileSystem API (available inside Spark environment).
+    """
+    import boto3
+    import os
+
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=os.environ.get("MINIO_ENDPOINT", "http://minio:9000"),
+            aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY",
+                                              os.environ.get("AWS_ACCESS_KEY_ID", "")),
+            aws_secret_access_key=os.environ.get("MINIO_SECRET_KEY",
+                                                  os.environ.get("AWS_SECRET_ACCESS_KEY", "")),
+        )
+        # landing_path = "s3a://landing/weather/"
+        bucket = "landing"
+        prefix = "weather/"
+
+        resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=50)
+        moved = 0
+        for obj in resp.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".csv") or "/processed/" in key:
+                continue
+            filename = key.split("/")[-1]
+            new_key = f"{prefix}processed/{filename}"
+            s3.copy_object(Bucket=bucket, Key=new_key,
+                           CopySource={"Bucket": bucket, "Key": key})
+            s3.delete_object(Bucket=bucket, Key=key)
+            moved += 1
+            logger.info(f"  Moved {key} -> {new_key}")
+
+        logger.info(f"Moved {moved} CSV files to processed/")
+    except Exception as e:
+        logger.warning(f"Could not move CSV files to processed/: {e}")
+
+
 def main():
     spark = create_spark_session()
 
@@ -177,6 +218,10 @@ def main():
 
         logger.info(f"Written {total_count} records to Bronze: {BRONZE_WEATHER_BATCH_PATH}")
         result.show(10, truncate=False)
+
+        # Move processed CSV files to processed/ subfolder
+        # so check_landing_zone won't pick them up again
+        _move_csv_to_processed(landing_path)
 
     except Exception as e:
         logger.error(f"Batch Bronze ingestion failed: {e}", exc_info=True)

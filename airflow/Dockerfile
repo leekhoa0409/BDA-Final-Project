@@ -2,10 +2,15 @@ FROM apache/airflow:2.7.3-python3.8
 
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    default-jdk curl procps \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    curl procps gnupg \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/default-java
+RUN mkdir -p /opt/java/openjdk && \
+    cd /opt/java/openjdk && \
+    curl -sL https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.24%2B8/OpenJDK11U-jdk_x64_linux_hotspot_11.0.24_8.tar.gz | tar xz --strip-components=1
+
+ENV JAVA_HOME=/opt/java/openjdk
+ENV PATH=/opt/java/openjdk/bin:$PATH
 USER airflow
 
 COPY requirements.txt /tmp/requirements.txt

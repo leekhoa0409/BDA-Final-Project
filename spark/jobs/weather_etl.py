@@ -1,6 +1,5 @@
 import logging
 import sys
-import great_expectations as ge
 from pyspark.sql.functions import year, month, dayofmonth
 from delta.tables import DeltaTable
 

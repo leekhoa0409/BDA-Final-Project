@@ -170,14 +170,20 @@ async def metrics():
 
 
 def prepare_features(req: PredictionRequest, cached_features: Optional[Dict] = None) -> np.ndarray:
-    defaults = {
+    defaults = DEFAULT_FEATURES.copy()
+    defaults.update({
         'temp_lag_1h': req.temperature,
         'temp_lag_3h': req.temperature,
         'temp_lag_6h': req.temperature,
+        'temp_lag_12h': req.temperature,
         'temp_lag_24h': req.temperature,
         'temp_24h_ma': req.temperature,
+        'temp_168h_ma': req.temperature,
+        'humid_lag_1h': req.humidity,
+        'humid_24h_ma': req.humidity,
+        'pres_lag_1h': req.pressure,
         'condition_encoded': 0,
-    }
+    })
     
     if cached_features:
         defaults.update(cached_features)
@@ -211,6 +217,21 @@ def prepare_features(req: PredictionRequest, cached_features: Optional[Dict] = N
             features['temp_lag_6h'], features['temp_lag_24h'], features['temp_24h_ma'],
             features['condition_encoded']
         ]])
+
+
+DEFAULT_FEATURES = {
+    "temp_lag_1h": 20.0,
+    "temp_lag_3h": 20.0,
+    "temp_lag_6h": 20.0,
+    "temp_lag_12h": 20.0,
+    "temp_lag_24h": 20.0,
+    "temp_24h_ma": 20.0,
+    "temp_168h_ma": 20.0,
+    "humid_lag_1h": 60.0,
+    "humid_24h_ma": 60.0,
+    "temp_24h_std": 2.0,
+    "pres_lag_1h": 1013.0,
+}
 
 
 def get_cached_features() -> Optional[Dict]:
